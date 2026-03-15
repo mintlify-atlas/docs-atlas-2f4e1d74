@@ -1,0 +1,173 @@
+{
+  "projectType": "framework",
+  "projectName": "NestJS",
+  "projectDescription": "A progressive Node.js framework for building efficient, scalable, and enterprise-grade server-side applications with TypeScript.",
+  "theme": "linden",
+  "primaryColor": "#de2850",
+  "lightColor": "#e08cac",
+  "darkColor": null,
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "first-steps"
+            ]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": [
+              "core/modules",
+              "core/controllers",
+              "core/providers",
+              "core/middleware",
+              "core/exception-filters",
+              "core/pipes",
+              "core/guards",
+              "core/interceptors"
+            ]
+          },
+          {
+            "group": "Techniques",
+            "pages": [
+              "techniques/authentication",
+              "techniques/authorization",
+              "techniques/database",
+              "techniques/configuration",
+              "techniques/validation",
+              "techniques/caching",
+              "techniques/file-upload",
+              "techniques/logging",
+              "techniques/testing"
+            ]
+          },
+          {
+            "group": "Microservices",
+            "pages": [
+              "microservices/overview",
+              "microservices/tcp",
+              "microservices/redis",
+              "microservices/mqtt",
+              "microservices/nats",
+              "microservices/rabbitmq",
+              "microservices/kafka",
+              "microservices/grpc"
+            ]
+          },
+          {
+            "group": "WebSockets",
+            "pages": [
+              "websockets/gateways",
+              "websockets/exception-filters",
+              "websockets/pipes",
+              "websockets/guards",
+              "websockets/interceptors",
+              "websockets/adapters"
+            ]
+          },
+          {
+            "group": "GraphQL",
+            "pages": [
+              "graphql/overview",
+              "graphql/resolvers",
+              "graphql/mutations",
+              "graphql/subscriptions"
+            ]
+          },
+          {
+            "group": "CLI",
+            "pages": [
+              "cli/overview",
+              "cli/usages",
+              "cli/scripts"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Core",
+            "pages": [
+              "api/core/nest-factory",
+              "api/core/nest-application",
+              "api/core/injectable",
+              "api/core/module",
+              "api/core/controller",
+              "api/core/dependency-injection"
+            ]
+          },
+          {
+            "group": "Common",
+            "pages": [
+              "api/common/decorators",
+              "api/common/pipes",
+              "api/common/exceptions",
+              "api/common/interfaces"
+            ]
+          },
+          {
+            "group": "Microservices",
+            "pages": [
+              "api/microservices/client",
+              "api/microservices/server",
+              "api/microservices/decorators"
+            ]
+          },
+          {
+            "group": "WebSockets",
+            "pages": [
+              "api/websockets/gateways",
+              "api/websockets/decorators"
+            ]
+          },
+          {
+            "group": "Testing",
+            "pages": [
+              "api/testing/testing-module"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Modular architecture inspired by Angular with Modules, Controllers, and Providers",
+    "Built-in dependency injection container",
+    "First-class TypeScript support with full JavaScript compatibility",
+    "Microservices support (TCP, Redis, MQTT, NATS, RabbitMQ, Kafka, gRPC)",
+    "WebSocket gateways with Socket.io and ws adapters",
+    "Middleware, Guards, Interceptors, and Pipes as composable building blocks",
+    "Platform-agnostic: supports Express and Fastify",
+    "Interactive REPL for inspecting the application graph",
+    "Built-in testing utilities with NestJS Testing module",
+    "GraphQL support via @nestjs/graphql"
+  ],
+  "publicApiSurface": [
+    "NestFactory.create()",
+    "NestFactory.createMicroservice()",
+    "NestFactory.createApplicationContext()",
+    "@Module()",
+    "@Controller()",
+    "@Injectable()",
+    "@Inject()",
+    "@Get(), @Post(), @Put(), @Patch(), @Delete(), @Options(), @Head(), @All()",
+    "@Body(), @Param(), @Query(), @Headers(), @Ip(), @HostParam()",
+    "@UseGuards(), @UseInterceptors(), @UsePipes(), @UseFilters()",
+    "@Catch()",
+    "@MessagePattern(), @EventPattern()",
+    "@WebSocketGateway(), @SubscribeMessage()",
+    "@SetMetadata()",
+    "Reflector",
+    "INestApplication",
+    "INestMicroservice",
+    "INestApplicationContext",
+    "Test.createTestingModule()"
+  ]
+}
