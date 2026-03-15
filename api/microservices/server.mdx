@@ -1,0 +1,118 @@
+---
+title: Server
+description: Server base class, Transport enum, and CustomTransportStrategy interface for NestJS microservices.
+---
+
+## `Transport` enum
+
+Identifies the transport layer to use for a microservice. Imported from `@nestjs/microservices`.
+
+| Value | Transport |
+|---|---|
+| `Transport.TCP` | TCP (default) |
+| `Transport.REDIS` | Redis Pub/Sub |
+| `Transport.NATS` | NATS |
+| `Transport.MQTT` | MQTT |
+| `Transport.GRPC` | gRPC |
+| `Transport.RMQ` | RabbitMQ (AMQP) |
+| `Transport.KAFKA` | Kafka |
+
+Pass a `Transport` value in the `transport` field when creating a microservice or registering a client:
+
+```typescript
+import { NestFactory } from '@nestjs/core';
+import { Transport } from '@nestjs/microservices';
+import { AppModule } from './app.module';
+
+const app = await NestFactory.createMicroservice(AppModule, {
+  transport: Transport.REDIS,
+  options: {
+    host: 'localhost',
+    port: 6379,
+  },
+});
+await app.listen();
+```
+
+---
+
+## `CustomTransportStrategy`
+
+Interface to implement when building a custom transport server. Your class must implement both `listen()` and `close()`.
+
+```typescript
+interface CustomTransportStrategy {
+  transportId?: TransportId;
+  listen(callback: (...optionalParams: unknown[]) => any): any;
+  close(): any;
+}
+```
+
+<ResponseField name="transportId" type="TransportId">
+  Optional unique identifier for this transport. Used to distinguish transports when multiple are registered.
+</ResponseField>
+
+<ResponseField name="listen" type="(callback: (...optionalParams: unknown[]) => any) => any" required>
+  Called when the microservice starts. You must invoke `callback` once the transport is ready to receive messages.
+</ResponseField>
+
+<ResponseField name="close" type="() => any" required>
+  Called when the microservice is shutting down. Close connections and clean up resources here.
+</ResponseField>
+
+```typescript
+import { CustomTransportStrategy, Server } from '@nestjs/microservices';
+
+export class MyTransportStrategy
+  extends Server
+  implements CustomTransportStrategy
+{
+  listen(callback: () => void) {
+    // Start your transport and begin receiving messages
+    callback();
+  }
+
+  close() {
+    // Tear down your transport connection
+  }
+}
+```
+
+Register your custom transport with `NestFactory.createMicroservice()` using the `strategy` option:
+
+```typescript
+const app = await NestFactory.createMicroservice(AppModule, {
+  strategy: new MyTransportStrategy(),
+});
+```
+
+---
+
+## `Server` base class
+
+The abstract `Server` class (from `@nestjs/microservices`) is the recommended base class for custom transport implementations. It maintains the handler map, manages serialization/deserialization, and exposes protected helpers for dispatching messages.
+
+Key members:
+
+| Member | Description |
+|---|---|
+| `messageHandlers` | A `Map` of pattern keys to registered handler functions. |
+| `getHandlers()` | Returns the handler map. |
+| `getHandlerByPattern(pattern)` | Looks up a handler by pattern. |
+| `send(stream$, respond)` | Sends the result of an observable stream back through the transport. |
+| `handleEvent(pattern, packet, context)` | Dispatches a one-way event to the registered handler. |
+
+---
+
+## `NestMicroservice` lifecycle
+
+A microservice created with `NestFactory.createMicroservice()` follows this startup sequence:
+
+```typescript
+const app = await NestFactory.createMicroservice(AppModule, options);
+// At this point the DI container is initialized but the transport is not yet listening
+await app.listen();
+// Now the transport is active and accepting messages
+```
+
+Call `app.close()` to gracefully shut down and trigger `OnModuleDestroy` lifecycle hooks.

@@ -1,0 +1,220 @@
+---
+title: 'Providers'
+description: 'Learn how NestJS providers and dependency injection work, including custom provider recipes.'
+keywords: ['nestjs', 'providers', 'dependency injection', 'injectable', 'services', 'custom providers', 'scope']
+---
+
+Providers are a fundamental concept in Nest. Many of the basic Nest classes — services, repositories, factories, helpers — can be treated as providers. The key idea is that a provider can be **injected** as a dependency, meaning Nest's IoC container manages the instantiation and wiring of objects for you.
+
+## The `@Injectable()` decorator
+
+Mark a class as a provider by applying the `@Injectable()` decorator. This signals to the Nest runtime that the class can participate in dependency injection.
+
+```typescript cats/cats.service.ts
+import { Injectable } from '@nestjs/common';
+import { Cat } from './interfaces/cat.interface';
+
+@Injectable()
+export class CatsService {
+  private readonly cats: Cat[] = [];
+
+  create(cat: Cat) {
+    this.cats.push(cat);
+  }
+
+  findAll(): Promise<Cat[]> {
+    return Promise.resolve(this.cats);
+  }
+}
+```
+
+Inject the service into a controller via constructor injection:
+
+```typescript cats/cats.controller.ts
+import { Controller, Get } from '@nestjs/common';
+import { CatsService } from './cats.service';
+
+@Controller('cats')
+export class CatsController {
+  constructor(private readonly catsService: CatsService) {}
+
+  @Get()
+  findAll() {
+    return this.catsService.findAll();
+  }
+}
+```
+
+Register both in a module so the injector knows about them:
+
+```typescript cats/cats.module.ts
+import { Module } from '@nestjs/common';
+import { CatsController } from './cats.controller';
+import { CatsService } from './cats.service';
+
+@Module({
+  controllers: [CatsController],
+  providers: [CatsService],
+})
+export class CatsModule {}
+```
+
+<Note>
+  The shorthand `providers: [CatsService]` is equivalent to the long form `providers: [{ provide: CatsService, useClass: CatsService }]`.
+</Note>
+
+## Custom providers
+
+The standard class-based provider covers most use cases, but Nest also offers more explicit provider forms when you need finer control.
+
+### Value providers — `useValue`
+
+Inject a pre-existing value or mock object:
+
+```typescript
+import { Module } from '@nestjs/common';
+import { CatsService } from './cats/cats.service';
+
+const mockCatsService = {
+  findAll: () => [],
+};
+
+@Module({
+  providers: [
+    {
+      provide: CatsService,
+      useValue: mockCatsService,
+    },
+  ],
+})
+export class AppModule {}
+```
+
+### Class providers — `useClass`
+
+Dynamically swap the class that is instantiated based on conditions:
+
+```typescript
+@Module({
+  providers: [
+    {
+      provide: ConfigService,
+      useClass:
+        process.env.NODE_ENV === 'development'
+          ? DevelopmentConfigService
+          : ProductionConfigService,
+    },
+  ],
+})
+export class AppModule {}
+```
+
+### Factory providers — `useFactory`
+
+Create a provider dynamically. The factory function can receive injected dependencies via the `inject` array:
+
+```typescript
+@Module({
+  providers: [
+    {
+      provide: 'CONNECTION',
+      useFactory: (optionsProvider: OptionsProvider) => {
+        const options = optionsProvider.get();
+        return new DatabaseConnection(options);
+      },
+      inject: [OptionsProvider],
+    },
+  ],
+})
+export class AppModule {}
+```
+
+Factory providers support `async` functions, enabling asynchronous setup:
+
+```typescript
+{
+  provide: 'ASYNC_CONNECTION',
+  useFactory: async () => {
+    const connection = await createConnection();
+    return connection;
+  },
+}
+```
+
+### Alias providers — `useExisting`
+
+Create an alias that resolves to an existing provider. Both tokens point to the same singleton:
+
+```typescript
+{
+  provide: 'AliasedLoggerService',
+  useExisting: LoggerService,
+}
+```
+
+## Non-class injection tokens
+
+When a provider token is a string or symbol, use `@Inject()` for injection:
+
+```typescript
+import { Inject, Injectable } from '@nestjs/common';
+
+@Injectable()
+export class DatabaseService {
+  constructor(@Inject('CONNECTION') private connection: DatabaseConnection) {}
+}
+```
+
+## Optional providers
+
+If a dependency is not strictly required, mark it with `@Optional()`. Nest will inject `undefined` instead of throwing if no provider is registered:
+
+```typescript
+import { Injectable, Optional, Inject } from '@nestjs/common';
+
+@Injectable()
+export class HttpService {
+  constructor(
+    @Optional() @Inject('HTTP_OPTIONS') private options?: HttpModuleOptions,
+  ) {}
+}
+```
+
+## Provider scope
+
+By default, providers are **singletons** — a single instance is shared across the entire application. You can change this lifecycle using the `scope` option:
+
+| Scope       | Description |
+| ----------- | ----------- |
+| `DEFAULT`   | Singleton. One instance shared across the whole application. |
+| `REQUEST`   | A new instance is created per incoming request. |
+| `TRANSIENT` | A new instance is created each time the provider is injected. |
+
+```typescript
+import { Injectable, Scope } from '@nestjs/common';
+
+@Injectable({ scope: Scope.REQUEST })
+export class RequestScopedService {
+  // a fresh instance per HTTP request
+}
+```
+
+<Warning>
+  `REQUEST`-scoped providers propagate their scope upwards. Any singleton that injects a request-scoped provider becomes request-scoped as well, which can have significant performance implications.
+</Warning>
+
+<Accordion title="Property-based injection">
+  In most cases, constructor injection is preferred. However, if your class doesn't call `super()` from a base class, you can use property-based injection with `@Inject()`:
+
+  ```typescript
+  import { Injectable, Inject } from '@nestjs/common';
+
+  @Injectable()
+  export class HttpService {
+    @Inject('HTTP_OPTIONS')
+    private readonly options: HttpModuleOptions;
+  }
+  ```
+
+  Prefer constructor injection when possible — it makes dependencies explicit and easier to test.
+</Accordion>

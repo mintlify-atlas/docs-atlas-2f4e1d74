@@ -1,0 +1,245 @@
+---
+title: "Microservices overview"
+description: "Learn how NestJS microservices work, the two messaging patterns, how to create a microservice, and how to send messages from a client."
+keywords: ["nestjs", "microservices", "transport", "MessagePattern", "EventPattern", "ClientProxy", "ClientsModule", "TCP", "Redis", "NATS", "MQTT", "RabbitMQ", "Kafka", "gRPC"]
+---
+
+NestJS has first-class support for microservices. A NestJS microservice is an application that uses a transport layer other than HTTP — for example, TCP sockets, Redis pub/sub, NATS, MQTT, RabbitMQ (AMQP), Kafka, or gRPC. The `@nestjs/microservices` package provides all of the building blocks you need.
+
+## Two messaging patterns
+
+NestJS microservices support two communication styles.
+
+### Request-response
+
+The request-response pattern is used when you need a reply. The client sends a message and waits for the server to return a result. You declare a handler with `@MessagePattern()`.
+
+```typescript cats.controller.ts
+import { Controller } from '@nestjs/common';
+import { MessagePattern } from '@nestjs/microservices';
+
+@Controller()
+export class CatsController {
+  @MessagePattern({ cmd: 'find_all_cats' })
+  findAll(): string[] {
+    return ['Garfield', 'Whiskers'];
+  }
+}
+```
+
+The pattern can be any JSON-serialisable value — a string, a number, or a plain object.
+
+### Event-based
+
+The event-based pattern is fire-and-forget: the client emits an event and does not wait for a response. Use `@EventPattern()` to register an event handler.
+
+```typescript orders.controller.ts
+import { Controller } from '@nestjs/common';
+import { EventPattern } from '@nestjs/microservices';
+
+@Controller()
+export class OrdersController {
+  @EventPattern('order_created')
+  handleOrderCreated(data: Record<string, any>) {
+    // process the event
+  }
+}
+```
+
+## Creating a microservice
+
+Use `NestFactory.createMicroservice()` instead of `NestFactory.create()` to bootstrap a microservice. Pass the root module and a transport configuration object.
+
+```typescript main.ts
+import { NestFactory } from '@nestjs/core';
+import { Transport, MicroserviceOptions } from '@nestjs/microservices';
+import { AppModule } from './app.module';
+
+async function bootstrap() {
+  const app = await NestFactory.createMicroservice<MicroserviceOptions>(
+    AppModule,
+    {
+      transport: Transport.TCP,
+      options: {
+        host: 'localhost',
+        port: 3001,
+      },
+    },
+  );
+  await app.listen();
+}
+bootstrap();
+```
+
+Calling `app.listen()` starts the underlying server or connects to the broker. Unlike an HTTP application, there is no port passed to `listen()` — the port is part of the transport options.
+
+<Note>
+  The default transport is `Transport.TCP`. If you omit the `transport` field, NestJS defaults to TCP on port 3000.
+</Note>
+
+## Sending messages from a client
+
+To send messages or emit events to a microservice, inject a `ClientProxy` into your service using `ClientsModule`.
+
+<Steps>
+
+<Step title="Register the client in a module">
+
+Import `ClientsModule` and call `register()` with a name token and transport configuration:
+
+```typescript app.module.ts
+import { Module } from '@nestjs/common';
+import { ClientsModule, Transport } from '@nestjs/microservices';
+import { AppService } from './app.service';
+
+@Module({
+  imports: [
+    ClientsModule.register([
+      {
+        name: 'CATS_SERVICE',
+        transport: Transport.TCP,
+        options: { host: 'localhost', port: 3001 },
+      },
+    ]),
+  ],
+  providers: [AppService],
+})
+export class AppModule {}
+```
+
+</Step>
+
+<Step title="Inject the client proxy">
+
+Inject the client using the `@Inject()` decorator and the name token:
+
+```typescript app.service.ts
+import { Inject, Injectable } from '@nestjs/common';
+import { ClientProxy } from '@nestjs/microservices';
+import { Observable } from 'rxjs';
+
+@Injectable()
+export class AppService {
+  constructor(
+    @Inject('CATS_SERVICE') private readonly client: ClientProxy,
+  ) {}
+
+  getCats(): Observable<string[]> {
+    return this.client.send({ cmd: 'find_all_cats' }, {});
+  }
+
+  createCat(cat: { name: string }): Observable<void> {
+    return this.client.emit('cat_created', cat);
+  }
+}
+```
+
+</Step>
+
+</Steps>
+
+### `send()` vs `emit()`
+
+| Method | Pattern | Returns | When to use |
+|--------|---------|---------|-------------|
+| `send(pattern, data)` | Request-response | `Observable<TResult>` | When you need a reply |
+| `emit(pattern, data)` | Event-based | `Observable<void>` | Fire-and-forget notifications |
+
+Both methods return an `Observable`. You must subscribe to `send()` for the message to be dispatched. `emit()` connects and dispatches automatically.
+
+## `@Payload()` and `@Ctx()` decorators
+
+### `@Payload()`
+
+`@Payload()` extracts the message data passed to a handler. You can optionally provide a property key to extract a nested field, and pipe it through validation pipes.
+
+```typescript
+import { Controller } from '@nestjs/common';
+import { MessagePattern, Payload } from '@nestjs/microservices';
+
+@Controller()
+export class CatsController {
+  @MessagePattern({ cmd: 'create_cat' })
+  create(@Payload() createCatDto: CreateCatDto): string {
+    return `Created ${createCatDto.name}`;
+  }
+
+  @MessagePattern({ cmd: 'get_cat_name' })
+  getName(@Payload('name') name: string): string {
+    return name;
+  }
+}
+```
+
+### `@Ctx()`
+
+`@Ctx()` injects the transport-specific execution context. Each transport provides its own context class — for example, `TcpContext`, `RedisContext`, `NatsContext`, or `RmqContext`. These give you access to the raw message or channel information.
+
+```typescript
+import { Controller } from '@nestjs/common';
+import { MessagePattern, Payload, Ctx, NatsContext } from '@nestjs/microservices';
+
+@Controller()
+export class CatsController {
+  @MessagePattern('cats.find')
+  find(
+    @Payload() id: string,
+    @Ctx() context: NatsContext,
+  ) {
+    console.log(`Subject: ${context.getSubject()}`);
+    return { id };
+  }
+}
+```
+
+## The `Transport` enum
+
+All built-in transports are listed in the `Transport` enum exported from `@nestjs/microservices`:
+
+| Value | Transport |
+|-------|-----------|
+| `Transport.TCP` | Raw TCP sockets (default) |
+| `Transport.REDIS` | Redis pub/sub via ioredis |
+| `Transport.NATS` | NATS messaging system |
+| `Transport.MQTT` | MQTT protocol (IoT-friendly) |
+| `Transport.GRPC` | gRPC over HTTP/2 |
+| `Transport.RMQ` | RabbitMQ via AMQP |
+| `Transport.KAFKA` | Apache Kafka via KafkaJS |
+
+## Transport comparison
+
+| Transport | Install | Best for |
+|-----------|---------|----------|
+| TCP | (built-in) | Internal services, simple setups |
+| Redis | `ioredis` | Lightweight pub/sub, short-lived messages |
+| NATS | `nats` | High-throughput, cloud-native messaging |
+| MQTT | `mqtt` | IoT devices, constrained networks |
+| RabbitMQ | `amqplib`, `amqp-connection-manager` | Reliable queuing, complex routing |
+| Kafka | `kafkajs` | Event streaming, high volume, replay |
+| gRPC | `@grpc/grpc-js`, `@grpc/proto-loader` | Strongly typed contracts, streaming |
+
+## Explore transports
+
+<Columns cols={2}>
+  <Card title="TCP" icon="network-wired" href="/microservices/tcp">
+    The default transport. Simple, low-overhead, no broker required.
+  </Card>
+  <Card title="Redis" icon="database" href="/microservices/redis">
+    Pub/sub messaging backed by a Redis instance.
+  </Card>
+  <Card title="MQTT" icon="wifi" href="/microservices/mqtt">
+    Lightweight publish/subscribe protocol designed for IoT.
+  </Card>
+  <Card title="NATS" icon="bolt" href="/microservices/nats">
+    High-performance cloud-native messaging.
+  </Card>
+  <Card title="RabbitMQ" icon="comments" href="/microservices/rabbitmq">
+    AMQP-based reliable message queuing.
+  </Card>
+  <Card title="Kafka" icon="layer-group" href="/microservices/kafka">
+    Distributed event streaming platform.
+  </Card>
+  <Card title="gRPC" icon="code" href="/microservices/grpc">
+    Strongly typed RPC with HTTP/2 and Protocol Buffers.
+  </Card>
+</Columns>

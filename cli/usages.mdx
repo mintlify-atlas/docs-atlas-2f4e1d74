@@ -1,0 +1,259 @@
+---
+title: 'CLI usages'
+description: 'Complete reference for every NestJS CLI command, flag, and schematic.'
+keywords: ['nestjs', 'cli', 'nest generate', 'nest build', 'nest start', 'schematics', 'monorepo']
+---
+
+This page covers every `nest` command and its options. Run `nest <command> --help` at any time to print the built-in help for a specific command.
+
+## `nest new`
+
+Scaffolds a new NestJS project.
+
+```bash
+nest new <project-name> [options]
+```
+
+| Option | Description |
+|---|---|
+| `--directory <dir>` | Specify the destination directory (defaults to `<project-name>`). |
+| `--skip-git` | Skip `git init`. |
+| `--skip-install` | Skip the package install step. |
+| `--package-manager <pm>` | Force a package manager: `npm`, `yarn`, or `pnpm`. |
+| `--language <lang>` | Select `TypeScript` (default) or `JavaScript`. |
+| `--collection <collection>` | Specify a custom schematics collection. |
+| `--strict` | Enable strict TypeScript compiler options. |
+
+**Example:**
+
+```bash
+nest new my-api --package-manager pnpm --strict
+```
+
+## `nest generate`
+
+Alias: `nest g`
+
+Generates a file from a schematic template and updates the nearest module automatically.
+
+```bash
+nest generate <schematic> <name> [options]
+```
+
+| Option | Description |
+|---|---|
+| `--path <path>` | Override the destination path. |
+| `--flat` | Do not create a subdirectory for the generated file. |
+| `--no-flat` | Create a subdirectory (overrides `flat` in `nest-cli.json`). |
+| `--spec` / `--no-spec` | Generate (or skip) a spec file. |
+| `--skip-import` | Do not add the generated class to its nearest module. |
+| `--project <project>` | (Monorepo) Target project name. |
+| `--dry-run` | Preview the files that would be generated without writing them. |
+
+### Available schematics
+
+| Schematic | Alias | Description |
+|---|---|---|
+| `application` | `app` | Generate a new application (for monorepo). |
+| `class` | `cl` | Generate a plain TypeScript class. |
+| `configuration` | `config` | Generate a CLI configuration file. |
+| `controller` | `co` | Generate a REST controller with route handlers. |
+| `decorator` | `d` | Generate a custom decorator. |
+| `filter` | `f` | Generate an exception filter. |
+| `gateway` | `ga` | Generate a WebSocket gateway. |
+| `guard` | `gu` | Generate a route guard. |
+| `interceptor` | `itc` | Generate an interceptor. |
+| `interface` | `itf` | Generate a TypeScript interface. |
+| `middleware` | `mi` | Generate HTTP middleware. |
+| `module` | `mo` | Generate a module. |
+| `pipe` | `pi` | Generate a pipe. |
+| `provider` | `pr` | Generate a generic provider. |
+| `resolver` | `r` | Generate a GraphQL resolver. |
+| `resource` | `res` | Generate a full CRUD resource (module + controller + service + DTOs). |
+| `service` | `s` | Generate a service. |
+
+**Examples:**
+
+```bash
+# Generate a users module, controller, and service
+nest g resource users
+
+# Generate just a controller in a subdirectory
+nest g controller auth
+
+# Preview without writing files
+nest g service payments --dry-run
+```
+
+## `nest build`
+
+Compiles the application using `tsc` (default) or webpack.
+
+```bash
+nest build [app] [options]
+```
+
+| Option | Description |
+|---|---|
+| `--path <path>` | Path to the `tsconfig.json` file. |
+| `--config <path>` | Path to the `nest-cli.json` file. |
+| `--watch` / `-w` | Run in watch mode, recompiling on changes. |
+| `--webpack` | Use webpack instead of `tsc`. |
+| `--webpackPath <path>` | Path to a custom webpack configuration file. |
+| `--tsc` | Force `tsc` even if webpack is configured. |
+| `--preserveWatchOutput` | Keep old output in the terminal when in watch mode. |
+
+**Example:**
+
+```bash
+# Build with watch mode
+nest build --watch
+
+# Build a specific project in a monorepo
+nest build payments-service
+```
+
+## `nest start`
+
+Builds and starts the application. In development, use `--watch` to restart on file changes.
+
+```bash
+nest start [app] [options]
+```
+
+| Option | Description |
+|---|---|
+| `--path <path>` | Path to the `tsconfig.json` file. |
+| `--config <path>` | Path to the `nest-cli.json` file. |
+| `--watch` / `-w` | Restart the process when source files change. |
+| `--debug [hostport]` | Start in debug mode and open the inspector. Defaults to `0.0.0.0:9229`. |
+| `--webpack` | Use webpack for compilation. |
+| `--exec <binary>` | Binary used to run the entry file (defaults to `node`). |
+| `--preserveWatchOutput` | Keep old output when in watch mode. |
+
+**Examples:**
+
+```bash
+# Start with live reload
+nest start --watch
+
+# Start with the Node.js debugger
+nest start --debug
+
+# Start a specific app in a monorepo
+nest start api-gateway --watch
+```
+
+## `nest info`
+
+Alias: `nest i`
+
+Prints system information and the versions of all installed NestJS packages.
+
+```bash
+nest info
+```
+
+Sample output:
+
+```
+ [System Information]
+ OS Version     : macOS 14.0
+ NodeJS Version : v22.0.0
+ NPM Version    : 10.0.0
+
+ [Nest CLI]
+ Nest CLI Version : 10.4.0
+
+ [Nest Platform Information]
+ platform-express version : 10.4.0
+ schematics version       : 10.2.0
+ testing version          : 10.4.0
+ common version           : 10.4.0
+ core version             : 10.4.0
+ cli version              : 10.4.0
+```
+
+## `nest add`
+
+Installs a NestJS library package and runs its install schematic to configure it automatically.
+
+```bash
+nest add <library> [options]
+```
+
+**Example:**
+
+```bash
+nest add @nestjs/swagger
+```
+
+## Monorepo mode
+
+The CLI supports a monorepo structure where multiple applications and libraries share a single repository.
+
+<Steps>
+  <Step title="Create the monorepo workspace">
+    ```bash
+    nest new my-workspace
+    ```
+  </Step>
+  <Step title="Add a second application">
+    ```bash
+    nest g app payments-service
+    ```
+  </Step>
+  <Step title="Add a shared library">
+    ```bash
+    nest g library shared-types
+    ```
+
+    This creates `libs/shared-types/` and registers it in `nest-cli.json` with a default path alias of `@app/shared-types`.
+  </Step>
+  <Step title="Build or start a specific project">
+    ```bash
+    nest build payments-service
+    nest start payments-service --watch
+    ```
+  </Step>
+</Steps>
+
+The `nest-cli.json` for a monorepo lists each application under `projects`:
+
+```json nest-cli.json
+{
+  "collection": "@nestjs/schematics",
+  "sourceRoot": "apps/my-workspace/src",
+  "monorepo": true,
+  "root": "apps/my-workspace",
+  "projects": {
+    "my-workspace": {
+      "type": "application",
+      "root": "apps/my-workspace",
+      "entryFile": "main",
+      "sourceRoot": "apps/my-workspace/src"
+    },
+    "payments-service": {
+      "type": "application",
+      "root": "apps/payments-service",
+      "entryFile": "main",
+      "sourceRoot": "apps/payments-service/src"
+    },
+    "shared-types": {
+      "type": "library",
+      "root": "libs/shared-types",
+      "entryFile": "index",
+      "sourceRoot": "libs/shared-types/src"
+    }
+  }
+}
+```
+
+<Columns cols={2}>
+  <Card title="CLI overview" icon="book" href="/cli/overview">
+    Installation, project structure, and nest-cli.json reference.
+  </Card>
+  <Card title="npm scripts" icon="play" href="/cli/scripts">
+    The npm scripts bundled with every NestJS project.
+  </Card>
+</Columns>

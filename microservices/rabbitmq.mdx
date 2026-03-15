@@ -1,0 +1,235 @@
+---
+title: "RabbitMQ transport"
+description: "Use RabbitMQ (AMQP) as a NestJS microservice transport for reliable message queuing with flexible routing."
+keywords: ["nestjs", "microservices", "RabbitMQ", "Transport.RMQ", "AMQP", "amqplib", "amqp-connection-manager", "RmqRecord", "exchange", "wildcards"]
+---
+
+The RabbitMQ transport uses the AMQP protocol via the `amqplib` and `amqp-connection-manager` packages. It supports durable queues, acknowledgements, prefetch, and exchange-based routing.
+
+## Installation
+
+<CodeGroup>
+
+```bash npm
+npm install amqplib amqp-connection-manager
+```
+
+```bash yarn
+yarn add amqplib amqp-connection-manager
+```
+
+```bash pnpm
+pnpm add amqplib amqp-connection-manager
+```
+
+</CodeGroup>
+
+## Creating a RabbitMQ microservice
+
+```typescript main.ts
+import { NestFactory } from '@nestjs/core';
+import { Transport, MicroserviceOptions } from '@nestjs/microservices';
+import { AppModule } from './app.module';
+
+async function bootstrap() {
+  const app = await NestFactory.createMicroservice<MicroserviceOptions>(
+    AppModule,
+    {
+      transport: Transport.RMQ,
+      options: {
+        urls: ['amqp://localhost:5672'],
+        queue: 'cats_queue',
+        queueOptions: {
+          durable: true,
+        },
+      },
+    },
+  );
+  await app.listen();
+}
+bootstrap();
+```
+
+## Configuration options
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `urls` | `string[] \| RmqUrl[]` | `['amqp://localhost']` | AMQP broker URL(s) |
+| `queue` | `string` | `''` | Queue name to consume |
+| `queueOptions` | `AmqplibQueueOptions` | `{}` | Options passed to `channel.assertQueue()` |
+| `noAck` | `boolean` | `true` | When `true`, messages are auto-acknowledged |
+| `prefetchCount` | `number` | `0` | Maximum unacknowledged messages per channel |
+| `isGlobalPrefetchCount` | `boolean` | `false` | Apply prefetch at channel level instead of consumer level |
+| `socketOptions` | `AmqpConnectionManagerSocketOptions` | — | Connection manager socket options (heartbeat, reconnect interval) |
+| `exchange` | `string` | — | Exchange name (defaults to queue name when `wildcards` is `true`) |
+| `exchangeType` | `'direct' \| 'fanout' \| 'topic' \| 'headers'` | `'topic'` | AMQP exchange type |
+| `exchangeArguments` | `Record<string, string>` | `{}` | Additional exchange arguments |
+| `routingKey` | `string` | — | Routing key for binding the queue to the exchange |
+| `wildcards` | `boolean` | `false` | Enable topic exchange routing with `*` and `#` wildcards |
+| `replyQueue` | `string` | `'amq.rabbitmq.reply-to'` | Reply queue used by the producer |
+| `persistent` | `boolean` | `false` | Mark messages as persistent (survives broker restart) |
+| `headers` | `Record<string, string>` | — | Additional headers sent with every producer message |
+| `noAssert` | `boolean` | `false` | Skip queue assertion on startup |
+| `consumerTag` | `string` | — | Custom consumer tag |
+| `maxConnectionAttempts` | `number` | `-1` | Maximum broker connection attempts (`-1` = infinite) |
+| `serializer` | `Serializer` | `RmqRecordSerializer` | Custom outbound message serializer |
+| `deserializer` | `Deserializer` | `IncomingResponseDeserializer` | Custom inbound message deserializer |
+
+## Message handlers
+
+```typescript cats.controller.ts
+import { Controller } from '@nestjs/common';
+import {
+  MessagePattern,
+  EventPattern,
+  Payload,
+  Ctx,
+  RmqContext,
+} from '@nestjs/microservices';
+
+@Controller()
+export class CatsController {
+  @MessagePattern({ cmd: 'create_cat' })
+  create(@Payload() data: { name: string }): { id: string; name: string } {
+    return { id: '1', name: data.name };
+  }
+
+  @EventPattern('cat_created')
+  handleCatCreated(
+    @Payload() data: { name: string },
+    @Ctx() context: RmqContext,
+  ) {
+    const channel = context.getChannelRef();
+    const message = context.getMessage();
+    const pattern = context.getPattern();
+    console.log(`Received event on pattern: ${pattern}`);
+    // Manually acknowledge when noAck is false
+    channel.ack(message);
+  }
+}
+```
+
+`RmqContext` provides:
+- `getMessage()` — the raw `amqplib` message
+- `getChannelRef()` — the AMQP channel (use to `ack` or `nack` messages)
+- `getPattern()` — the matched pattern string
+
+<Note>
+  When `noAck` is `false`, you are responsible for acknowledging each message by calling `channel.ack(message)`. Unacknowledged messages are requeued by the broker.
+</Note>
+
+## Client configuration
+
+```typescript app.module.ts
+import { Module } from '@nestjs/common';
+import { ClientsModule, Transport } from '@nestjs/microservices';
+
+@Module({
+  imports: [
+    ClientsModule.register([
+      {
+        name: 'CATS_SERVICE',
+        transport: Transport.RMQ,
+        options: {
+          urls: ['amqp://localhost:5672'],
+          queue: 'cats_queue',
+          queueOptions: { durable: true },
+        },
+      },
+    ]),
+  ],
+})
+export class AppModule {}
+```
+
+```typescript app.service.ts
+import { Inject, Injectable } from '@nestjs/common';
+import { ClientProxy } from '@nestjs/microservices';
+import { Observable } from 'rxjs';
+
+@Injectable()
+export class AppService {
+  constructor(
+    @Inject('CATS_SERVICE') private readonly client: ClientProxy,
+  ) {}
+
+  createCat(name: string): Observable<{ id: string; name: string }> {
+    return this.client.send({ cmd: 'create_cat' }, { name });
+  }
+
+  notifyCatCreated(name: string): Observable<void> {
+    return this.client.emit('cat_created', { name });
+  }
+}
+```
+
+## Message options with `RmqRecordBuilder`
+
+Use `RmqRecordBuilder` to set per-message AMQP properties such as priority, expiration, and content type:
+
+```typescript
+import { RmqRecordBuilder } from '@nestjs/microservices';
+
+const record = new RmqRecordBuilder({ name: 'Garfield' })
+  .setOptions({
+    persistent: true,
+    priority: 10,
+    contentType: 'application/json',
+  })
+  .build();
+
+this.client.send({ cmd: 'create_cat' }, record);
+```
+
+## Manual acknowledgements
+
+Set `noAck: false` and call `channel.ack()` or `channel.nack()` yourself to control redelivery:
+
+```typescript main.ts
+options: {
+  urls: ['amqp://localhost:5672'],
+  queue: 'cats_queue',
+  noAck: false,
+  prefetchCount: 1,
+}
+```
+
+```typescript cats.controller.ts
+@EventPattern('cat_created')
+async handleCatCreated(
+  @Payload() data: unknown,
+  @Ctx() context: RmqContext,
+) {
+  try {
+    await processData(data);
+    context.getChannelRef().ack(context.getMessage());
+  } catch {
+    // Requeue the message for redelivery
+    context.getChannelRef().nack(context.getMessage(), false, true);
+  }
+}
+```
+
+## Topic exchange with wildcard patterns
+
+Set `wildcards: true` to enable a topic exchange, which allows `*` (single word) and `#` (zero or more words) wildcards in routing keys:
+
+```typescript main.ts
+options: {
+  urls: ['amqp://localhost:5672'],
+  queue: 'cats_queue',
+  wildcards: true,
+}
+```
+
+```typescript
+@EventPattern('cats.*')
+handleAnyCatEvent(@Payload() data: unknown) {
+  // matches cats.created, cats.deleted, etc.
+}
+
+@EventPattern('animals.#')
+handleAnyAnimalEvent(@Payload() data: unknown) {
+  // matches animals.cats.created, animals.dogs.updated, etc.
+}
+```

@@ -1,0 +1,286 @@
+---
+title: "gRPC transport"
+description: "Use gRPC as a NestJS microservice transport for strongly typed RPC with Protocol Buffers, HTTP/2, and streaming."
+keywords: ["nestjs", "microservices", "gRPC", "Transport.GRPC", "grpc-js", "proto-loader", "GrpcMethod", "GrpcStreamMethod", "protobuf", "streaming"]
+---
+
+The gRPC transport uses the `@grpc/grpc-js` and `@grpc/proto-loader` packages to serve strongly typed remote procedure calls defined in Protocol Buffer (`.proto`) files. It runs over HTTP/2 and supports unary, server-streaming, client-streaming, and bidirectional-streaming call types.
+
+## Installation
+
+<CodeGroup>
+
+```bash npm
+npm install @grpc/grpc-js @grpc/proto-loader
+```
+
+```bash yarn
+yarn add @grpc/grpc-js @grpc/proto-loader
+```
+
+```bash pnpm
+pnpm add @grpc/grpc-js @grpc/proto-loader
+```
+
+</CodeGroup>
+
+## Defining a proto file
+
+Create a `.proto` file that describes your service:
+
+```protobuf hero.proto
+syntax = "proto3";
+
+package hero;
+
+service HeroService {
+  rpc FindOne (HeroById) returns (Hero);
+  rpc FindMany (stream HeroById) returns (stream Hero);
+}
+
+message HeroById {
+  int32 id = 1;
+}
+
+message Hero {
+  int32 id = 1;
+  string name = 2;
+}
+```
+
+## Creating a gRPC microservice
+
+```typescript main.ts
+import { NestFactory } from '@nestjs/core';
+import { Transport, MicroserviceOptions } from '@nestjs/microservices';
+import { join } from 'path';
+import { AppModule } from './app.module';
+
+async function bootstrap() {
+  const app = await NestFactory.createMicroservice<MicroserviceOptions>(
+    AppModule,
+    {
+      transport: Transport.GRPC,
+      options: {
+        package: 'hero',
+        protoPath: join(__dirname, 'hero.proto'),
+        url: 'localhost:5000',
+      },
+    },
+  );
+  await app.listen();
+}
+bootstrap();
+```
+
+The default `url` is `localhost:5000`.
+
+## Configuration options
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `package` | `string \| string[]` | — | Proto package name(s) to load |
+| `protoPath` | `string \| string[]` | — | Absolute path(s) to `.proto` file(s) |
+| `url` | `string` | `'localhost:5000'` | Server bind address |
+| `loader` | object | — | Options passed to `@grpc/proto-loader` (see below) |
+| `credentials` | `ServerCredentials` | `createInsecure()` | gRPC server credentials |
+| `channelOptions` | `ChannelOptions` | — | Raw gRPC channel options |
+| `maxSendMessageLength` | `number` | — | Maximum outgoing message size in bytes |
+| `maxReceiveMessageLength` | `number` | — | Maximum incoming message size in bytes |
+| `maxMetadataSize` | `number` | — | Maximum metadata size in bytes |
+| `keepalive` | object | — | Keepalive options (see table below) |
+| `gracefulShutdown` | `boolean` | `false` | Use `tryShutdown()` instead of `forceShutdown()` |
+| `onLoadPackageDefinition` | `(pkg, server) => void` | — | Hook called after the package definition is loaded |
+| `protoLoader` | `string` | `'@grpc/proto-loader'` | Alternative proto loader package |
+
+### Keepalive options
+
+| Option | gRPC channel key |
+|--------|------------------|
+| `keepaliveTimeMs` | `grpc.keepalive_time_ms` |
+| `keepaliveTimeoutMs` | `grpc.keepalive_timeout_ms` |
+| `keepalivePermitWithoutCalls` | `grpc.keepalive_permit_without_calls` |
+| `http2MaxPingsWithoutData` | `grpc.http2.max_pings_without_data` |
+| `http2MinTimeBetweenPingsMs` | `grpc.http2.min_time_between_pings_ms` |
+| `http2MinPingIntervalWithoutDataMs` | `grpc.http2.min_ping_interval_without_data_ms` |
+| `http2MaxPingStrikes` | `grpc.http2.max_ping_strikes` |
+
+### Proto loader options
+
+The `loader` object is passed directly to `@grpc/proto-loader.loadSync()`:
+
+| Option | Type | Description |
+|--------|------|-------------|
+| `keepCase` | `boolean` | Preserve field name case |
+| `longs` | `Function` | Type to use for `int64` and `uint64` |
+| `enums` | `Function` | Type to use for enum values |
+| `bytes` | `Function` | Type to use for `bytes` fields |
+| `defaults` | `boolean` | Include default values in output |
+| `arrays` | `boolean` | Always output repeated fields as arrays |
+| `objects` | `boolean` | Always output `map` fields as objects |
+| `oneofs` | `boolean` | Include virtual oneof fields |
+| `json` | `boolean` | Represent `google.protobuf.Any` as plain objects |
+| `includeDirs` | `string[]` | Additional directories to search for `.proto` imports |
+
+## Implementing service methods with `@GrpcMethod()`
+
+Use `@GrpcMethod()` on controller methods to map them to gRPC RPC definitions. The decorator takes the service name and optionally the method name:
+
+```typescript hero.controller.ts
+import { Controller } from '@nestjs/common';
+import { GrpcMethod } from '@nestjs/microservices';
+
+interface HeroById {
+  id: number;
+}
+
+interface Hero {
+  id: number;
+  name: string;
+}
+
+@Controller()
+export class HeroController {
+  private readonly heroes: Hero[] = [
+    { id: 1, name: 'Lancelot' },
+    { id: 2, name: 'Perceval' },
+  ];
+
+  @GrpcMethod('HeroService', 'FindOne')
+  findOne(data: HeroById): Hero {
+    return this.heroes.find(({ id }) => id === data.id)!;
+  }
+}
+```
+
+If you omit the method name, NestJS uses the handler name with a capitalised first letter. If you also omit the service name, NestJS uses the controller class name.
+
+## Streaming with `@GrpcStreamMethod()`
+
+Use `@GrpcStreamMethod()` to handle client-side or bidirectional streaming. The handler receives an `Observable` of client messages and must return an `Observable`:
+
+```typescript hero.controller.ts
+import { Controller } from '@nestjs/common';
+import { GrpcStreamMethod } from '@nestjs/microservices';
+import { Observable, Subject } from 'rxjs';
+
+@Controller()
+export class HeroController {
+  @GrpcStreamMethod('HeroService', 'FindMany')
+  findMany(messages$: Observable<HeroById>): Observable<Hero> {
+    const subject = new Subject<Hero>();
+    const heroes: Hero[] = [
+      { id: 1, name: 'Lancelot' },
+      { id: 2, name: 'Perceval' },
+    ];
+
+    messages$.subscribe({
+      next: ({ id }) => {
+        const hero = heroes.find(h => h.id === id);
+        if (hero) subject.next(hero);
+      },
+      complete: () => subject.complete(),
+    });
+
+    return subject.asObservable();
+  }
+}
+```
+
+<Tip>
+  `@GrpcStreamMethod()` wraps the incoming stream in an RxJS `Observable`. If you prefer to work directly with the raw gRPC call object, use `@GrpcStreamCall()` instead.
+</Tip>
+
+## gRPC client
+
+To call a gRPC service from another NestJS service, register a client with the gRPC transport and inject it using the `ClientGrpc` interface:
+
+```typescript app.module.ts
+import { Module } from '@nestjs/common';
+import { ClientsModule, Transport } from '@nestjs/microservices';
+import { join } from 'path';
+
+@Module({
+  imports: [
+    ClientsModule.register([
+      {
+        name: 'HERO_PACKAGE',
+        transport: Transport.GRPC,
+        options: {
+          package: 'hero',
+          protoPath: join(__dirname, 'hero.proto'),
+          url: 'localhost:5000',
+        },
+      },
+    ]),
+  ],
+})
+export class AppModule {}
+```
+
+```typescript app.service.ts
+import { Inject, Injectable, OnModuleInit } from '@nestjs/common';
+import { ClientGrpc } from '@nestjs/microservices';
+import { Observable } from 'rxjs';
+
+interface HeroService {
+  findOne(data: { id: number }): Observable<{ id: number; name: string }>;
+}
+
+@Injectable()
+export class AppService implements OnModuleInit {
+  private heroService: HeroService;
+
+  constructor(
+    @Inject('HERO_PACKAGE') private readonly client: ClientGrpc,
+  ) {}
+
+  onModuleInit() {
+    this.heroService = this.client.getService<HeroService>('HeroService');
+  }
+
+  findHero(id: number): Observable<{ id: number; name: string }> {
+    return this.heroService.findOne({ id });
+  }
+}
+```
+
+Call `client.getService<T>(serviceName)` in `onModuleInit()` to retrieve a typed service stub. Each method on the stub returns an `Observable`.
+
+## TLS / mTLS
+
+Pass `grpcPackage.credentials.createSsl()` to enable TLS, or `createFromMetadataGenerator()` for mTLS:
+
+```typescript
+import * as grpc from '@grpc/grpc-js';
+import { readFileSync } from 'fs';
+
+options: {
+  package: 'hero',
+  protoPath: join(__dirname, 'hero.proto'),
+  url: 'localhost:5000',
+  credentials: grpc.ServerCredentials.createSsl(
+    readFileSync('ca.crt'),
+    [{
+      cert_chain: readFileSync('server.crt'),
+      private_key: readFileSync('server.key'),
+    }],
+    true, // mutual TLS
+  ),
+}
+```
+
+## Multiple proto packages
+
+Pass arrays to `package` and `protoPath` to load multiple packages:
+
+```typescript
+options: {
+  package: ['hero', 'villain'],
+  protoPath: [
+    join(__dirname, 'hero.proto'),
+    join(__dirname, 'villain.proto'),
+  ],
+  url: 'localhost:5000',
+}
+```

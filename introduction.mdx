@@ -1,0 +1,75 @@
+---
+title: "Introduction"
+description: "NestJS is a progressive Node.js framework for building efficient, reliable, and scalable server-side applications."
+keywords: ["nestjs", "nodejs", "typescript", "framework", "backend", "dependency injection", "decorators"]
+---
+
+NestJS is a framework for building server-side Node.js applications. It is built with and fully supports TypeScript (while remaining compatible with pure JavaScript) and combines elements of object-oriented programming (OOP), functional programming (FP), and functional reactive programming (FRP).
+
+Under the hood, NestJS uses [Express](https://expressjs.com/) by default, but also provides compatibility with [Fastify](https://fastify.dev/), so you can swap HTTP platforms without rewriting application code.
+
+## Philosophy
+
+In recent years, thanks to Node.js, JavaScript has become the shared language of the web for both front-end and back-end applications. This has led to projects like [Angular](https://angular.dev/), [React](https://reactjs.org/), and [Vue](https://vuejs.org/) that improve developer productivity and enable the construction of fast, testable, and extensible front-end applications. However, despite the existence of many excellent libraries and tools for Node.js on the server side, none of them effectively solved the fundamental problem of **architecture**.
+
+NestJS solves this by providing an application architecture out of the box. It is heavily inspired by Angular and gives teams a clear structure for organizing code into modules, controllers, and providers. The result is an application that is highly testable, scalable, loosely coupled, and easy to maintain.
+
+## Core principles
+
+**TypeScript-first.** NestJS is built entirely in TypeScript. You get decorators, strict typing, and metadata reflection everywhere — from route handlers to dependency injection tokens. JavaScript projects are also supported.
+
+**Decorator-driven.** NestJS uses TypeScript decorators to express application structure. `@Module()`, `@Controller()`, `@Injectable()`, and HTTP method decorators (`@Get()`, `@Post()`, etc.) describe what a class does without coupling it to framework internals.
+
+**Built-in dependency injection.** NestJS ships a full inversion-of-control (IoC) container. Providers marked with `@Injectable()` are automatically resolved and injected into classes that declare them as constructor parameters. No manual wiring required.
+
+**Platform agnostic.** NestJS works with Express and Fastify out of the box. The same application code runs on both. You can also plug in custom HTTP adapters.
+
+## Key features
+
+<Columns cols={2}>
+  <Card title="Modular architecture" icon="puzzle-piece" href="/core/modules">
+    Organize your application into self-contained feature modules. Each module declares its controllers, providers, and imports. Modules can be exported and reused across projects.
+  </Card>
+  <Card title="Dependency injection" icon="syringe" href="/core/providers">
+    The built-in IoC container automatically resolves and injects providers. Write loosely coupled, easily testable code without manual wiring.
+  </Card>
+  <Card title="Controllers" icon="route" href="/core/controllers">
+    Controllers handle incoming HTTP requests and return responses. Use `@Controller()` and HTTP method decorators to define routes declaratively.
+  </Card>
+  <Card title="Providers & services" icon="gear" href="/core/providers">
+    Any class decorated with `@Injectable()` can be injected anywhere in the application. Services, repositories, factories, and helpers are all providers.
+  </Card>
+  <Card title="Middleware, guards & interceptors" icon="shield" href="/core/guards">
+    Add cross-cutting concerns — authentication, logging, validation, transformation — at the right layer of the request lifecycle.
+  </Card>
+  <Card title="Pipes & exception filters" icon="filter" href="/core/pipes">
+    Validate and transform incoming data with pipes. Catch and format errors globally with exception filters.
+  </Card>
+</Columns>
+
+## Beyond HTTP
+
+NestJS is not limited to HTTP servers. The same architecture that structures your REST API also powers:
+
+- **Microservices** — built-in transports for TCP, Redis, MQTT, NATS, RabbitMQ, Kafka, and gRPC. See [Microservices](/microservices/overview).
+- **WebSockets** — first-class WebSocket support via `@WebSocketGateway()`, with adapters for Socket.io and the native `ws` library. See [WebSockets](/websockets/gateways).
+- **GraphQL** — code-first and schema-first approaches via `@nestjs/graphql`, powered by Apollo or Mercurius. See [GraphQL](/graphql/overview).
+
+## TypeScript and JavaScript
+
+NestJS is written in TypeScript and all official documentation uses TypeScript examples. You can use NestJS with plain JavaScript by running the CLI with the `--language javascript` flag, but you lose decorator support without a Babel transform.
+
+<Tip>
+  If you are new to TypeScript, the [official TypeScript handbook](https://www.typescriptlang.org/docs/handbook/intro.html) is a good starting point before diving into NestJS.
+</Tip>
+
+## Next steps
+
+<Columns cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Install the CLI and create a running NestJS app in under five minutes.
+  </Card>
+  <Card title="First steps" icon="map" href="/first-steps">
+    Walk through every auto-generated file in a new project and understand how they fit together.
+  </Card>
+</Columns>

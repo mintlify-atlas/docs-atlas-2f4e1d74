@@ -1,0 +1,183 @@
+---
+title: "TCP transport"
+description: "Use NestJS's default TCP transport to communicate between microservices over raw TCP sockets with optional TLS."
+keywords: ["nestjs", "microservices", "TCP", "Transport.TCP", "TcpContext", "retryAttempts", "TLS"]
+---
+
+TCP is the default transport for NestJS microservices. It requires no external broker — NestJS opens a raw TCP server and exchanges JSON-framed messages between services.
+
+## How it works
+
+The server wraps each TCP socket with a `JsonSocket` that delimits messages with newlines. Each request-response message carries a unique `id` so that concurrent in-flight messages are correlated correctly. Event messages (those without an `id`) are dispatched fire-and-forget.
+
+## Creating a TCP microservice
+
+```typescript main.ts
+import { NestFactory } from '@nestjs/core';
+import { Transport, MicroserviceOptions } from '@nestjs/microservices';
+import { AppModule } from './app.module';
+
+async function bootstrap() {
+  const app = await NestFactory.createMicroservice<MicroserviceOptions>(
+    AppModule,
+    {
+      transport: Transport.TCP,
+      options: {
+        host: '0.0.0.0',
+        port: 3001,
+      },
+    },
+  );
+  await app.listen();
+}
+bootstrap();
+```
+
+<Note>
+  Because TCP is the default transport, omitting the `transport` field produces the same result. NestJS defaults to `Transport.TCP` on `localhost:3000`.
+</Note>
+
+## Configuration options
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `host` | `string` | `'localhost'` | Host to bind or connect to |
+| `port` | `number` | `3000` | TCP port |
+| `retryAttempts` | `number` | — | Number of reconnection attempts before giving up |
+| `retryDelay` | `number` | `0` | Milliseconds between reconnection attempts |
+| `tlsOptions` | `TlsOptions` | — | Node.js `tls.TlsOptions` to enable TLS |
+| `maxBufferSize` | `number` | 128 MB | Maximum buffer size in characters; prevents memory exhaustion on large messages |
+| `serializer` | `Serializer` | `IdentitySerializer` | Custom outbound message serializer |
+| `deserializer` | `Deserializer` | `IncomingResponseDeserializer` | Custom inbound message deserializer |
+| `socketClass` | `Type<TcpSocket>` | `JsonSocket` | Custom socket class |
+
+## Message handlers
+
+Declare handlers with `@MessagePattern()` for request-response or `@EventPattern()` for events.
+
+```typescript math.controller.ts
+import { Controller } from '@nestjs/common';
+import { MessagePattern, EventPattern, Payload, Ctx, TcpContext } from '@nestjs/microservices';
+
+@Controller()
+export class MathController {
+  @MessagePattern({ cmd: 'sum' })
+  sum(@Payload() numbers: number[]): number {
+    return numbers.reduce((acc, n) => acc + n, 0);
+  }
+
+  @EventPattern('log')
+  log(
+    @Payload() message: string,
+    @Ctx() context: TcpContext,
+  ) {
+    const [socket, pattern] = context.getArgs();
+    console.log(`[${pattern}] ${message}`);
+  }
+}
+```
+
+## Client configuration
+
+Register a TCP client in your module and inject `ClientProxy`:
+
+```typescript app.module.ts
+import { Module } from '@nestjs/common';
+import { ClientsModule, Transport } from '@nestjs/microservices';
+
+@Module({
+  imports: [
+    ClientsModule.register([
+      {
+        name: 'MATH_SERVICE',
+        transport: Transport.TCP,
+        options: {
+          host: 'localhost',
+          port: 3001,
+        },
+      },
+    ]),
+  ],
+})
+export class AppModule {}
+```
+
+```typescript app.service.ts
+import { Inject, Injectable } from '@nestjs/common';
+import { ClientProxy } from '@nestjs/microservices';
+import { Observable } from 'rxjs';
+
+@Injectable()
+export class AppService {
+  constructor(
+    @Inject('MATH_SERVICE') private readonly client: ClientProxy,
+  ) {}
+
+  sum(numbers: number[]): Observable<number> {
+    return this.client.send<number>({ cmd: 'sum' }, numbers);
+  }
+
+  log(message: string): Observable<void> {
+    return this.client.emit('log', message);
+  }
+}
+```
+
+### Sending messages with `send()`
+
+`send()` returns a cold `Observable`. The message is not dispatched until you subscribe.
+
+```typescript
+this.client.send<number>({ cmd: 'sum' }, [1, 2, 3]).subscribe(result => {
+  console.log(result); // 6
+});
+```
+
+### Emitting events with `emit()`
+
+`emit()` automatically subscribes internally — you do not need to call `subscribe()` yourself.
+
+```typescript
+this.client.emit('log', 'Server started').subscribe();
+```
+
+## TLS
+
+Pass Node.js `tls.TlsOptions` to enable TLS on the server:
+
+```typescript main.ts
+import { readFileSync } from 'fs';
+
+const app = await NestFactory.createMicroservice<MicroserviceOptions>(
+  AppModule,
+  {
+    transport: Transport.TCP,
+    options: {
+      host: '0.0.0.0',
+      port: 3001,
+      tlsOptions: {
+        key: readFileSync('server.key'),
+        cert: readFileSync('server.crt'),
+        ca: [readFileSync('ca.crt')],
+      },
+    },
+  },
+);
+```
+
+## Retry behaviour
+
+Set `retryAttempts` and `retryDelay` to have the server automatically re-bind after an unexpected close:
+
+```typescript
+options: {
+  host: 'localhost',
+  port: 3001,
+  retryAttempts: 5,
+  retryDelay: 1000, // 1 second between attempts
+}
+```
+
+<Tip>
+  Use `retryAttempts` in conjunction with a health check or readiness probe so your orchestrator knows when the service is genuinely unavailable.
+</Tip>

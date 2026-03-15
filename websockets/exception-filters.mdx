@@ -1,0 +1,225 @@
+---
+title: 'Exception filters'
+description: 'Catch and handle exceptions thrown inside WebSocket gateway handlers using WsException and WsExceptionFilter.'
+keywords: ['websockets', 'exception filter', 'WsException', 'error handling', 'nest']
+---
+
+Exception filters work in WebSocket gateways the same way they work in HTTP controllers — you decorate a class with `@Catch()`, implement the `WsExceptionFilter` interface, and bind the filter to a gateway or handler. The only difference is in how you access the WebSocket context through `ArgumentsHost`.
+
+## The `WsException` class
+
+`WsException` is the base exception class for WebSocket errors. Throw it inside a gateway handler to signal that something went wrong. The default exception filter catches it and emits an `exception` event back to the client.
+
+```typescript
+import { WsException } from '@nestjs/websockets';
+
+throw new WsException('Unauthorized');
+// or pass an object
+throw new WsException({ status: 'error', message: 'Unauthorized' });
+```
+
+The constructor accepts either a `string` or an `object`:
+
+- **String** — the message property of the emitted payload is set to the string.
+- **Object** — the entire object is emitted directly as the exception payload.
+
+`WsException` exposes one method:
+
+| Method | Return type | Description |
+|---|---|---|
+| `getError()` | `string \| object` | Returns the original value passed to the constructor. |
+
+## Default error payload
+
+When the built-in `BaseWsExceptionFilter` catches a `WsException` with a string message, it emits this shape:
+
+```json
+{
+  "status": "error",
+  "message": "Unauthorized",
+  "cause": {
+    "pattern": "events",
+    "data": { ... }
+  }
+}
+```
+
+When the exception is thrown with an object, that object is emitted directly (without wrapping).
+
+## Writing a custom exception filter
+
+Implement `WsExceptionFilter<T>` from `@nestjs/common`, then annotate it with `@Catch()`.
+
+```typescript ws-exception.filter.ts
+import { ArgumentsHost, Catch, ExceptionFilter } from '@nestjs/common';
+import { WsException } from '@nestjs/websockets';
+
+@Catch(WsException)
+export class WsExceptionFilter implements ExceptionFilter {
+  catch(exception: WsException, host: ArgumentsHost) {
+    const client = host.switchToWs().getClient();
+    const data = host.switchToWs().getData();
+
+    client.emit('exception', {
+      status: 'error',
+      message: exception.getError(),
+      data,
+    });
+  }
+}
+```
+
+### Accessing WebSocket context
+
+Call `host.switchToWs()` to obtain a `WsArgumentsHost`, which provides three methods:
+
+| Method | Return type | Description |
+|---|---|---|
+| `getClient<T>()` | `T` | The raw socket client for the current connection. |
+| `getData<T>()` | `T` | The payload that triggered the event handler. |
+| `getPattern()` | `string` | The event name that triggered the handler. |
+
+```typescript
+const wsCtx = host.switchToWs();
+
+const client = wsCtx.getClient<Socket>();  // socket.io Socket
+const data   = wsCtx.getData<unknown>();    // incoming payload
+const event  = wsCtx.getPattern();          // e.g. 'events'
+```
+
+## Extending `BaseWsExceptionFilter`
+
+Extend `BaseWsExceptionFilter` when you want to customise only part of the default error handling.
+
+```typescript ws-exception.filter.ts
+import { ArgumentsHost, Catch } from '@nestjs/common';
+import { BaseWsExceptionFilter, WsException } from '@nestjs/websockets';
+
+@Catch()
+export class AllWsExceptionsFilter extends BaseWsExceptionFilter {
+  catch(exception: unknown, host: ArgumentsHost) {
+    // Custom logging before delegating to the default behaviour
+    console.error('WS exception:', exception);
+    super.catch(exception, host);
+  }
+}
+```
+
+`BaseWsExceptionFilter` accepts an options object in its constructor:
+
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `includeCause` | `boolean` | `true` | Include the triggering pattern and data in the emitted payload. |
+| `causeFactory` | `(pattern, data) => object` | `(p, d) => ({ pattern: p, data: d })` | Customise the shape of the `cause` field. |
+
+```typescript
+@Catch()
+export class CustomWsFilter extends BaseWsExceptionFilter {
+  constructor() {
+    super({
+      includeCause: false, // omit cause from error payload
+    });
+  }
+
+  catch(exception: unknown, host: ArgumentsHost) {
+    super.catch(exception, host);
+  }
+}
+```
+
+## Binding filters
+
+### Method-scoped
+
+```typescript
+import { UseFilters } from '@nestjs/common';
+import { SubscribeMessage, WebSocketGateway } from '@nestjs/websockets';
+import { WsExceptionFilter } from './ws-exception.filter';
+
+@WebSocketGateway()
+export class EventsGateway {
+  @UseFilters(new WsExceptionFilter())
+  @SubscribeMessage('events')
+  handleEvent() {
+    throw new WsException('Something went wrong');
+  }
+}
+```
+
+### Gateway-scoped
+
+Applying the filter at class level covers every handler in the gateway.
+
+```typescript
+@UseFilters(new WsExceptionFilter())
+@WebSocketGateway()
+export class EventsGateway {
+  @SubscribeMessage('events')
+  handleEvent() {
+    throw new WsException('Something went wrong');
+  }
+}
+```
+
+### Global-scoped
+
+Register a filter globally so it applies to all gateways and controllers.
+
+```typescript main.ts
+import { NestFactory } from '@nestjs/core';
+import { AppModule } from './app.module';
+import { AllWsExceptionsFilter } from './filters/all-ws-exceptions.filter';
+
+async function bootstrap() {
+  const app = await NestFactory.create(AppModule);
+  app.useGlobalFilters(new AllWsExceptionsFilter());
+  await app.listen(3000);
+}
+bootstrap();
+```
+
+<Tip>
+Use dependency injection with a globally registered filter by providing it through the `APP_FILTER` token inside a module instead of calling `useGlobalFilters`.
+
+```typescript
+import { APP_FILTER } from '@nestjs/core';
+
+@Module({
+  providers: [
+    {
+      provide: APP_FILTER,
+      useClass: AllWsExceptionsFilter,
+    },
+  ],
+})
+export class AppModule {}
+```
+</Tip>
+
+## Catching multiple exception types
+
+Pass multiple exception classes to `@Catch()` to handle more than one type in a single filter.
+
+```typescript
+@Catch(WsException, UnauthorizedException)
+export class WsAndHttpExceptionFilter implements ExceptionFilter {
+  catch(exception: WsException | UnauthorizedException, host: ArgumentsHost) {
+    const client = host.switchToWs().getClient();
+    const message =
+      exception instanceof WsException
+        ? exception.getError()
+        : exception.message;
+
+    client.emit('exception', { status: 'error', message });
+  }
+}
+```
+
+<Columns cols={2}>
+  <Card title="Gateways" icon="plug" href="/websockets/gateways">
+    Learn how to create and configure WebSocket gateways.
+  </Card>
+  <Card title="Pipes" icon="filter" href="/websockets/pipes">
+    Validate and transform incoming message payloads.
+  </Card>
+</Columns>

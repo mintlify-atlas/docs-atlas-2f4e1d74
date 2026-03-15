@@ -1,0 +1,187 @@
+---
+title: Microservice decorators
+description: "MessagePattern, EventPattern, Payload, Ctx, and Client decorators from @nestjs/microservices."
+---
+
+All microservice decorators are exported from `@nestjs/microservices`.
+
+---
+
+## `@MessagePattern()`
+
+Registers a method as a handler for incoming messages that match the specified pattern. Used for the **request-response** communication pattern.
+
+```typescript
+const MessagePattern: {
+  <T = PatternMetadata | string>(metadata?: T): MethodDecorator;
+  <T = PatternMetadata | string>(metadata?: T, transport?: Transport | symbol): MethodDecorator;
+  <T = PatternMetadata | string>(metadata?: T, extras?: Record<string, any>): MethodDecorator;
+  <T = PatternMetadata | string>(metadata?: T, transport?: Transport | symbol, extras?: Record<string, any>): MethodDecorator;
+}
+```
+
+<ParamField path="metadata" type="PatternMetadata | string">
+  The pattern to match incoming messages against. Can be a string, an object, or a transport-specific pattern (e.g., an object with a `cmd` field for TCP).
+</ParamField>
+
+<ParamField path="transport" type="Transport | symbol">
+  Optionally restrict this handler to a specific transport. Useful in hybrid applications that run multiple transports.
+</ParamField>
+
+<ParamField path="extras" type="Record<string, any>">
+  Additional metadata associated with the pattern handler.
+</ParamField>
+
+```typescript
+import { Controller } from '@nestjs/common';
+import { MessagePattern } from '@nestjs/microservices';
+
+@Controller()
+export class MathController {
+  @MessagePattern({ cmd: 'sum' })
+  sum(data: number[]): number {
+    return data.reduce((a, b) => a + b, 0);
+  }
+
+  @MessagePattern('get_users')
+  getUsers() {
+    return [];
+  }
+}
+```
+
+<Note>
+  Handlers decorated with `@MessagePattern()` can return a value, a `Promise`, or an `Observable`. The framework serializes the result and sends it back to the caller.
+</Note>
+
+---
+
+## `@EventPattern()`
+
+Registers a method as a handler for incoming events that match the specified pattern. Used for **event-driven** (fire-and-forget) communication. The handler does not return a value to the caller.
+
+```typescript
+const EventPattern: {
+  <T = string>(metadata?: T): MethodDecorator;
+  <T = string>(metadata?: T, transport?: Transport | symbol): MethodDecorator;
+  <T = string>(metadata?: T, extras?: Record<string, any>): MethodDecorator;
+  <T = string>(metadata?: T, transport?: Transport | symbol, extras?: Record<string, any>): MethodDecorator;
+}
+```
+
+<ParamField path="metadata" type="T">
+  The event name or pattern to subscribe to.
+</ParamField>
+
+<ParamField path="transport" type="Transport | symbol">
+  Optional transport restriction.
+</ParamField>
+
+<ParamField path="extras" type="Record<string, any>">
+  Additional handler metadata.
+</ParamField>
+
+```typescript
+import { Controller } from '@nestjs/common';
+import { EventPattern } from '@nestjs/microservices';
+
+@Controller()
+export class UserController {
+  @EventPattern('user_created')
+  handleUserCreated(data: UserCreatedEvent) {
+    // Handle the event
+  }
+}
+```
+
+---
+
+## `@Payload()`
+
+Parameter decorator that extracts the message payload from the microservice context. Can optionally extract a named property and apply pipes.
+
+```typescript
+function Payload(): ParameterDecorator
+function Payload(...pipes: (Type<PipeTransform> | PipeTransform)[]): ParameterDecorator
+function Payload(
+  propertyKey?: string,
+  ...pipes: (Type<PipeTransform> | PipeTransform)[]
+): ParameterDecorator
+```
+
+<ParamField path="propertyKey" type="string">
+  Name of a specific property to extract from the payload object.
+</ParamField>
+
+<ParamField path="pipes" type="(Type<PipeTransform> | PipeTransform)[]">
+  Pipes to apply to the extracted value.
+</ParamField>
+
+```typescript
+import { MessagePattern, Payload } from '@nestjs/microservices';
+import { ValidationPipe } from '@nestjs/common';
+
+@MessagePattern({ cmd: 'create_user' })
+async createUser(
+  @Payload(new ValidationPipe()) createUserDto: CreateUserDto,
+) {
+  return this.usersService.create(createUserDto);
+}
+
+@MessagePattern({ cmd: 'get_user' })
+getUser(@Payload('id') id: string) {
+  return this.usersService.findOne(id);
+}
+```
+
+---
+
+## `@Ctx()`
+
+Parameter decorator that injects the transport-specific execution context object. The type of context depends on the active transport (e.g., `NatsContext`, `KafkaContext`, `RmqContext`).
+
+```typescript
+const Ctx: () => ParameterDecorator
+```
+
+```typescript
+import { MessagePattern, Payload, Ctx, NatsContext } from '@nestjs/microservices';
+
+@MessagePattern('notifications')
+getNotifications(
+  @Payload() data: number[],
+  @Ctx() context: NatsContext,
+) {
+  console.log(`Subject: ${context.getSubject()}`);
+  return data;
+}
+```
+
+<Tip>
+  The context object provides transport-specific metadata. For example, `RmqContext` gives you access to the channel and original RabbitMQ message for manual acknowledgement.
+</Tip>
+
+---
+
+## `@Client()`
+
+Property decorator that attaches a `ClientProxy` instance to a class property.
+
+```typescript
+function Client(metadata?: ClientOptions): PropertyDecorator
+```
+
+<ParamField path="metadata" type="ClientOptions">
+  Transport and connection options for the client proxy.
+</ParamField>
+
+```typescript
+import { Client, ClientProxy, Transport } from '@nestjs/microservices';
+
+export class AppController {
+  @Client({ transport: Transport.TCP, options: { port: 3001 } })
+  private readonly client: ClientProxy;
+}
+```
+
+See [Client reference](/api/microservices/client) for the full `ClientProxy` API.

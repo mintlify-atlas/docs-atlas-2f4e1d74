@@ -1,0 +1,302 @@
+---
+title: 'Adapters'
+description: 'Configure the WebSocket adapter used by NestJS — Socket.io, the native ws library, or a fully custom adapter.'
+keywords: ['websockets', 'adapter', 'socket.io', 'ws', 'IoAdapter', 'WsAdapter', 'nest']
+---
+
+NestJS decouples gateway logic from the underlying WebSocket library through an adapter layer. By default it uses Socket.io via `IoAdapter` from `@nestjs/platform-socket.io`. You can replace that with `WsAdapter` from `@nestjs/platform-ws` (which wraps the native `ws` library) or write a fully custom adapter.
+
+## Default adapter — `IoAdapter`
+
+`IoAdapter` is loaded automatically when you install `@nestjs/platform-socket.io`. You do not need to configure anything in `main.ts` to use it.
+
+```bash
+npm install @nestjs/websockets @nestjs/platform-socket.io
+```
+
+If your application runs on the same HTTP server as the gateway (port `0` / no explicit port), the IoAdapter attaches the Socket.io server to that HTTP server:
+
+```typescript events.gateway.ts
+import { WebSocketGateway, WebSocketServer } from '@nestjs/websockets';
+import { Server } from 'socket.io';
+
+// Attaches to the application HTTP server on the default /socket.io path
+@WebSocketGateway()
+export class EventsGateway {
+  @WebSocketServer()
+  server: Server;
+}
+```
+
+### Configuring CORS with `IoAdapter`
+
+Pass `cors` options to `@WebSocketGateway()`. These are forwarded directly to the Socket.io `Server` constructor:
+
+```typescript
+@WebSocketGateway({
+  cors: {
+    origin: 'https://example.com',
+    methods: ['GET', 'POST'],
+    credentials: true,
+  },
+})
+export class EventsGateway {}
+```
+
+You can also configure CORS globally by calling `app.useWebSocketAdapter()` with a custom `IoAdapter`:
+
+```typescript main.ts
+import { NestFactory } from '@nestjs/core';
+import { IoAdapter } from '@nestjs/platform-socket.io';
+import { AppModule } from './app.module';
+
+async function bootstrap() {
+  const app = await NestFactory.create(AppModule);
+  app.useWebSocketAdapter(new IoAdapter(app));
+  await app.listen(3000);
+}
+bootstrap();
+```
+
+## `WsAdapter` — native `ws` library
+
+The `WsAdapter` from `@nestjs/platform-ws` uses the lightweight [`ws`](https://github.com/websockets/ws) package without the Socket.io protocol overhead.
+
+```bash
+npm install @nestjs/websockets @nestjs/platform-ws ws
+npm install --save-dev @types/ws
+```
+
+Register it in `main.ts`:
+
+```typescript main.ts
+import { NestFactory } from '@nestjs/core';
+import { WsAdapter } from '@nestjs/platform-ws';
+import { AppModule } from './app.module';
+
+async function bootstrap() {
+  const app = await NestFactory.create(AppModule);
+  app.useWebSocketAdapter(new WsAdapter(app));
+  await app.listen(3000);
+}
+bootstrap();
+```
+
+Gateways work identically — only the server type changes:
+
+```typescript events.gateway.ts
+import { SubscribeMessage, WebSocketGateway, WebSocketServer } from '@nestjs/websockets';
+import { Server } from 'ws';
+
+@WebSocketGateway(8080)
+export class EventsGateway {
+  @WebSocketServer()
+  server: Server;
+
+  @SubscribeMessage('events')
+  handleEvent(client: any, data: any) {
+    return { event: 'events', data };
+  }
+}
+```
+
+<Warning>
+`WsAdapter` does not support namespaces. If you attempt to use the `namespace` option with `WsAdapter`, it will throw an error at startup. Use `IoAdapter` (Socket.io) if you need namespace support.
+</Warning>
+
+### Custom message parser
+
+`WsAdapter` expects messages to be JSON-encoded `{ event, data }` objects by default. You can override this with a custom parser:
+
+```typescript
+const adapter = new WsAdapter(app, {
+  messageParser: (raw) => {
+    const parsed = JSON.parse(raw.toString());
+    // Custom mapping to { event, data }
+    return { event: parsed.type, data: parsed.payload };
+  },
+});
+app.useWebSocketAdapter(adapter);
+```
+
+## Comparison — Socket.io vs `ws`
+
+<Tabs>
+  <Tab title="Socket.io (IoAdapter)">
+    | Feature | Detail |
+    |---|---|
+    | Package | `@nestjs/platform-socket.io` |
+    | Protocol | Socket.io over WebSocket / long-polling |
+    | Namespaces | Supported (`namespace` option) |
+    | Rooms | Built-in (`socket.join`, `server.to`) |
+    | CORS | Configured via `GatewayMetadata.cors` |
+    | Client compatibility | Requires the Socket.io client library |
+    | Fallback transport | Automatic HTTP long-polling fallback |
+    | Binary support | Yes |
+  </Tab>
+  <Tab title="ws (WsAdapter)">
+    | Feature | Detail |
+    |---|---|
+    | Package | `@nestjs/platform-ws` |
+    | Protocol | Raw WebSocket (RFC 6455) |
+    | Namespaces | Not supported |
+    | Rooms | Not built-in (implement manually) |
+    | CORS | Handled by the underlying HTTP server |
+    | Client compatibility | Any standard WebSocket client |
+    | Fallback transport | None |
+    | Binary support | Yes |
+  </Tab>
+</Tabs>
+
+## Creating a custom adapter
+
+Extend `AbstractWsAdapter` (or `IoAdapter`) and implement the abstract methods to integrate any WebSocket library.
+
+### `AbstractWsAdapter` interface
+
+```typescript
+abstract class AbstractWsAdapter<TServer, TClient, TOptions> {
+  // Required — create and return the server instance
+  abstract create(port: number, options?: TOptions): TServer;
+
+  // Required — subscribe message handlers to the client socket
+  abstract bindMessageHandlers(
+    client: TClient,
+    handlers: MessageMappingProperties[],
+    transform: (data: any) => Observable<any>,
+  ): void;
+
+  // Pre-implemented — override if needed
+  bindClientConnect(server: TServer, callback: Function): void;
+  bindClientDisconnect(client: TClient, callback: Function): void;
+  close(server: TServer): Promise<void>;
+  dispose(): Promise<void>;
+}
+```
+
+### Redis adapter example
+
+The following example extends `IoAdapter` to distribute Socket.io events across multiple NestJS processes using a Redis pub/sub channel.
+
+```typescript redis-io.adapter.ts
+import { IoAdapter } from '@nestjs/platform-socket.io';
+import { createAdapter } from '@socket.io/redis-adapter';
+import { createClient } from 'redis';
+import { ServerOptions } from 'socket.io';
+
+export class RedisIoAdapter extends IoAdapter {
+  private adapterConstructor: ReturnType<typeof createAdapter>;
+
+  async connectToRedis(): Promise<void> {
+    const pubClient = createClient({ url: 'redis://localhost:6379' });
+    const subClient = pubClient.duplicate();
+
+    await Promise.all([pubClient.connect(), subClient.connect()]);
+
+    this.adapterConstructor = createAdapter(pubClient, subClient);
+  }
+
+  createIOServer(port: number, options?: ServerOptions): any {
+    const server = super.createIOServer(port, options);
+    server.adapter(this.adapterConstructor);
+    return server;
+  }
+}
+```
+
+Register it in `main.ts`:
+
+```typescript main.ts
+import { NestFactory } from '@nestjs/core';
+import { AppModule } from './app.module';
+import { RedisIoAdapter } from './adapters/redis-io.adapter';
+
+async function bootstrap() {
+  const app = await NestFactory.create(AppModule);
+
+  const redisIoAdapter = new RedisIoAdapter(app);
+  await redisIoAdapter.connectToRedis();
+
+  app.useWebSocketAdapter(redisIoAdapter);
+  await app.listen(3000);
+}
+bootstrap();
+```
+
+### Minimal custom adapter
+
+The example below shows the minimum required surface to implement `AbstractWsAdapter` directly, using the `ws` package as the underlying library.
+
+```typescript custom-ws.adapter.ts
+import { INestApplicationContext } from '@nestjs/common';
+import { AbstractWsAdapter, MessageMappingProperties } from '@nestjs/websockets';
+import { Observable, fromEvent, EMPTY } from 'rxjs';
+import { mergeMap, filter } from 'rxjs/operators';
+import * as WebSocket from 'ws';
+
+export class CustomWsAdapter extends AbstractWsAdapter {
+  constructor(app: INestApplicationContext) {
+    super(app);
+  }
+
+  create(port: number, options?: Record<string, any>): WebSocket.Server {
+    return new WebSocket.Server({ port, ...options });
+  }
+
+  bindMessageHandlers(
+    client: WebSocket,
+    handlers: MessageMappingProperties[],
+    transform: (data: any) => Observable<any>,
+  ) {
+    fromEvent(client, 'message')
+      .pipe(
+        mergeMap((buffer: any) => {
+          try {
+            const message = JSON.parse(buffer.data);
+            const handler = handlers.find(h => h.message === message.event);
+            if (!handler) return EMPTY;
+            return transform(handler.callback(message.data));
+          } catch {
+            return EMPTY;
+          }
+        }),
+        filter(response => response !== null && response !== undefined),
+      )
+      .subscribe(response => {
+        if (client.readyState === WebSocket.OPEN) {
+          client.send(JSON.stringify(response));
+        }
+      });
+  }
+}
+```
+
+## Using `app.useWebSocketAdapter()`
+
+Call `app.useWebSocketAdapter()` in `main.ts` **before** `app.listen()`. Every gateway in the application will use the adapter you register.
+
+```typescript main.ts
+import { NestFactory } from '@nestjs/core';
+import { WsAdapter } from '@nestjs/platform-ws';
+import { AppModule } from './app.module';
+
+async function bootstrap() {
+  const app = await NestFactory.create(AppModule);
+  app.useWebSocketAdapter(new WsAdapter(app));
+  await app.listen(3000);
+}
+bootstrap();
+```
+
+<Note>
+You can only register one adapter per application. All gateways share the same adapter instance.
+</Note>
+
+<Columns cols={2}>
+  <Card title="Gateways" icon="plug" href="/websockets/gateways">
+    Learn the gateway fundamentals and decorator API.
+  </Card>
+  <Card title="Exception filters" icon="shield" href="/websockets/exception-filters">
+    Handle errors thrown inside gateway handlers.
+  </Card>
+</Columns>

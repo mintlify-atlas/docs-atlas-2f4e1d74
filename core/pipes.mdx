@@ -1,0 +1,200 @@
+---
+title: 'Pipes'
+description: 'Validate and transform incoming data with NestJS pipes, including built-in pipes and custom PipeTransform implementations.'
+keywords: ['nestjs', 'pipes', 'validation', 'transformation', 'PipeTransform', 'ValidationPipe', 'class-validator']
+---
+
+A pipe is a class annotated with the `@Injectable()` decorator that implements the `PipeTransform` interface. Pipes have two typical use cases:
+
+- **Transformation** — transform input data to the desired shape (e.g., string to integer).
+- **Validation** — evaluate input data and either pass it through unchanged or throw an exception.
+
+In both cases, pipes operate on the **arguments** being processed by a route handler, just before the handler is called.
+
+## Built-in pipes
+
+Nest ships with the following pipes out of the box, all exported from `@nestjs/common`:
+
+<CardGroup cols={2}>
+  <Card title="ValidationPipe" icon="circle-check">
+    Validates request payloads using `class-validator` decorators.
+  </Card>
+  <Card title="ParseIntPipe" icon="arrow-right-left">
+    Transforms a string route/query param to an integer.
+  </Card>
+  <Card title="ParseBoolPipe" icon="arrow-right-left">
+    Transforms `"true"` / `"false"` strings to booleans.
+  </Card>
+  <Card title="ParseArrayPipe" icon="arrow-right-left">
+    Parses and optionally validates array inputs.
+  </Card>
+  <Card title="ParseUUIDPipe" icon="arrow-right-left">
+    Validates that a string is a valid UUID.
+  </Card>
+  <Card title="ParseEnumPipe" icon="arrow-right-left">
+    Validates that a string belongs to a given enum.
+  </Card>
+  <Card title="ParseFloatPipe" icon="arrow-right-left">
+    Transforms a string param to a floating-point number.
+  </Card>
+  <Card title="DefaultValuePipe" icon="sliders">
+    Provides a default value when a param is `undefined`.
+  </Card>
+</CardGroup>
+
+### Using built-in pipes
+
+Bind a pipe to a parameter by passing it as the second argument to the parameter decorator:
+
+```typescript
+import { Get, Param, ParseIntPipe } from '@nestjs/common';
+
+@Get(':id')
+findOne(@Param('id', ParseIntPipe) id: number) {
+  return this.catsService.findOne(id);
+}
+```
+
+If `id` cannot be parsed as an integer, Nest throws a `BadRequestException` before the handler is called.
+
+You can also pass an instance to customize the error behavior:
+
+```typescript
+@Get(':id')
+findOne(
+  @Param('id', new ParseIntPipe({ errorHttpStatusCode: HttpStatus.NOT_ACCEPTABLE }))
+  id: number,
+) {
+  return this.catsService.findOne(id);
+}
+```
+
+## Custom pipes
+
+Implement `PipeTransform` to build your own pipe:
+
+```typescript common/pipes/parse-int.pipe.ts
+import {
+  ArgumentMetadata,
+  BadRequestException,
+  Injectable,
+  PipeTransform,
+} from '@nestjs/common';
+
+@Injectable()
+export class ParseIntPipe implements PipeTransform<string> {
+  async transform(value: string, metadata: ArgumentMetadata) {
+    const val = parseInt(value, 10);
+    if (isNaN(val)) {
+      throw new BadRequestException('Validation failed');
+    }
+    return val;
+  }
+}
+```
+
+The `transform()` method receives:
+
+- `value` — the current argument value before it reaches the route handler.
+- `metadata` — an `ArgumentMetadata` object with `type` (`'body'`, `'query'`, `'param'`, or `'custom'`), `metatype`, and `data` (the string passed to the decorator, e.g., `@Param('id')` yields `'id'`).
+
+## Binding pipes
+
+Apply pipes at the parameter, method, controller, or global level.
+
+<Tabs>
+  <Tab title="Parameter scope">
+    ```typescript
+    @Get(':id')
+    findOne(@Param('id', ParseIntPipe) id: number) {
+      return this.catsService.findOne(id);
+    }
+    ```
+  </Tab>
+  <Tab title="Method scope">
+    ```typescript
+    import { UsePipes } from '@nestjs/common';
+
+    @Post()
+    @UsePipes(new ValidationPipe())
+    create(@Body() createCatDto: CreateCatDto) {
+      return this.catsService.create(createCatDto);
+    }
+    ```
+  </Tab>
+  <Tab title="Controller scope">
+    ```typescript
+    @UsePipes(ValidationPipe)
+    @Controller('cats')
+    export class CatsController {}
+    ```
+  </Tab>
+  <Tab title="Global scope">
+    ```typescript main.ts
+    async function bootstrap() {
+      const app = await NestFactory.create(AppModule);
+      app.useGlobalPipes(new ValidationPipe());
+      await app.listen(3000);
+    }
+    ```
+  </Tab>
+</Tabs>
+
+## Schema-based validation with `ValidationPipe`
+
+The built-in `ValidationPipe` pairs with `class-validator` and `class-transformer` to validate request payloads automatically.
+
+<Steps>
+  <Step title="Install the dependencies">
+    ```bash
+    npm install class-validator class-transformer
+    ```
+  </Step>
+  <Step title="Annotate the DTO">
+    ```typescript cats/dto/create-cat.dto.ts
+    import { IsInt, IsString } from 'class-validator';
+
+    export class CreateCatDto {
+      @IsString()
+      readonly name: string;
+
+      @IsInt()
+      readonly age: number;
+
+      @IsString()
+      readonly breed: string;
+    }
+    ```
+  </Step>
+  <Step title="Enable the pipe globally">
+    ```typescript main.ts
+    import { ValidationPipe } from '@nestjs/common';
+
+    async function bootstrap() {
+      const app = await NestFactory.create(AppModule);
+      app.useGlobalPipes(new ValidationPipe());
+      await app.listen(3000);
+    }
+    ```
+  </Step>
+</Steps>
+
+If validation fails, Nest automatically returns a `400 Bad Request` with a detailed errors array. Pass `transform: true` to `ValidationPipe` to have it automatically transform the incoming plain object into an instance of the DTO class:
+
+```typescript
+app.useGlobalPipes(new ValidationPipe({ transform: true }));
+```
+
+<Tip>
+  Register `ValidationPipe` globally via the `APP_PIPE` token to enable dependency injection in the pipe itself:
+
+  ```typescript app.module.ts
+  import { APP_PIPE } from '@nestjs/core';
+  import { ValidationPipe } from '@nestjs/common';
+
+  @Module({
+    providers: [{ provide: APP_PIPE, useClass: ValidationPipe }],
+  })
+  export class AppModule {}
+  ```
+</Tip>

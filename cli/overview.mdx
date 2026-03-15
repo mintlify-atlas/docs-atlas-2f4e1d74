@@ -1,0 +1,140 @@
+---
+title: 'CLI overview'
+description: 'Use the NestJS CLI to scaffold projects, generate files, build, and run your application.'
+keywords: ['nestjs', 'cli', 'nest new', 'nest generate', 'nest-cli.json', 'scaffold']
+---
+
+The NestJS CLI (`@nestjs/cli`) is a command-line tool that helps you create and maintain NestJS applications. It scaffolds new projects, generates boilerplate files, builds your source, and starts the development server.
+
+## Installation
+
+Install the CLI globally so the `nest` command is available everywhere:
+
+<CodeGroup>
+
+```bash npm
+npm install -g @nestjs/cli
+```
+
+```bash yarn
+yarn global add @nestjs/cli
+```
+
+```bash pnpm
+pnpm add -g @nestjs/cli
+```
+
+</CodeGroup>
+
+Verify the installation:
+
+```bash
+nest --version
+```
+
+## Creating a new project
+
+Run `nest new` followed by the project name to scaffold a fully configured NestJS application:
+
+```bash
+nest new my-app
+```
+
+The CLI will ask you to choose a package manager (npm, yarn, or pnpm) and then install all dependencies.
+
+<Steps>
+  <Step title="Run nest new">
+    ```bash
+    nest new my-app
+    ```
+  </Step>
+  <Step title="Move into the project directory">
+    ```bash
+    cd my-app
+    ```
+  </Step>
+  <Step title="Start the development server">
+    ```bash
+    npm run start:dev
+    ```
+
+    The application starts at `http://localhost:3000`.
+  </Step>
+</Steps>
+
+## Generated project structure
+
+After running `nest new`, your project looks like this:
+
+```
+my-app/
+├── src/
+│   ├── app.controller.spec.ts
+│   ├── app.controller.ts
+│   ├── app.module.ts
+│   ├── app.service.ts
+│   └── main.ts
+├── test/
+│   ├── app.e2e-spec.ts
+│   └── jest-e2e.json
+├── nest-cli.json
+├── package.json
+├── tsconfig.build.json
+└── tsconfig.json
+```
+
+| File/folder | Purpose |
+|---|---|
+| `src/main.ts` | Application entry point. Calls `NestFactory.create()`. |
+| `src/app.module.ts` | Root module. Import all feature modules here. |
+| `src/app.controller.ts` | Example controller with a single `GET /` route. |
+| `src/app.service.ts` | Example service injected into the controller. |
+| `nest-cli.json` | CLI configuration (source root, compiler options, etc.). |
+| `tsconfig.build.json` | TypeScript configuration used during builds. |
+
+## `nest-cli.json` configuration
+
+The `nest-cli.json` file at the project root controls how the CLI compiles and serves your application.
+
+```json nest-cli.json
+{
+  "$schema": "https://json.schemastore.org/nest-cli",
+  "collection": "@nestjs/schematics",
+  "sourceRoot": "src",
+  "compilerOptions": {
+    "deleteOutDir": true
+  }
+}
+```
+
+### Key options
+
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `collection` | `string` | `"@nestjs/schematics"` | Schematics collection used by `nest generate`. |
+| `sourceRoot` | `string` | `"src"` | Root directory of the application source. |
+| `entryFile` | `string` | `"main"` | Entry file name (without extension). |
+| `compilerOptions.deleteOutDir` | `boolean` | `false` | Delete the output directory before each build. |
+| `compilerOptions.webpack` | `boolean` | `false` | Use webpack instead of `tsc`. |
+| `compilerOptions.tsConfigPath` | `string` | `"tsconfig.build.json"` | Path to the TypeScript config file. |
+| `projects` | `object` | — | Monorepo project definitions. |
+
+## Available commands
+
+| Command | Alias | Description |
+|---|---|---|
+| `nest new <name>` | `n` | Scaffold a new NestJS project. |
+| `nest generate <schematic> <name>` | `g` | Generate a file using a schematic. |
+| `nest build [app]` | | Compile the application with `tsc` or webpack. |
+| `nest start [app]` | | Start the application (builds first). |
+| `nest info` | `i` | Display system and NestJS package version info. |
+| `nest add <library>` | | Install a library and run its setup schematic. |
+
+<Columns cols={2}>
+  <Card title="CLI usages" icon="terminal" href="/cli/usages">
+    Detailed reference for every CLI command and schematic.
+  </Card>
+  <Card title="npm scripts" icon="play" href="/cli/scripts">
+    The npm scripts generated in every NestJS project.
+  </Card>
+</Columns>

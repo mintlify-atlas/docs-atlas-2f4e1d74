@@ -1,0 +1,207 @@
+---
+title: "Kafka transport"
+description: "Use Apache Kafka as a NestJS microservice transport for distributed event streaming with KafkaJS."
+keywords: ["nestjs", "microservices", "Kafka", "Transport.KAFKA", "kafkajs", "KafkaContext", "consumer", "producer", "groupId"]
+---
+
+The Kafka transport uses the `kafkajs` package to consume and produce Kafka messages. NestJS creates a consumer and a producer for each application, and correlates request-response messages using Kafka headers.
+
+## Installation
+
+<CodeGroup>
+
+```bash npm
+npm install kafkajs
+```
+
+```bash yarn
+yarn add kafkajs
+```
+
+```bash pnpm
+pnpm add kafkajs
+```
+
+</CodeGroup>
+
+## Creating a Kafka microservice
+
+```typescript main.ts
+import { NestFactory } from '@nestjs/core';
+import { Transport, MicroserviceOptions } from '@nestjs/microservices';
+import { AppModule } from './app.module';
+
+async function bootstrap() {
+  const app = await NestFactory.createMicroservice<MicroserviceOptions>(
+    AppModule,
+    {
+      transport: Transport.KAFKA,
+      options: {
+        client: {
+          clientId: 'orders-server',
+          brokers: ['localhost:9092'],
+        },
+        consumer: {
+          groupId: 'orders-consumer',
+        },
+      },
+    },
+  );
+  await app.listen();
+}
+bootstrap();
+```
+
+<Note>
+  NestJS automatically appends `-server` to the `clientId` and `groupId` on the server side, and `-client` on the client side. This prevents collisions when both run in the same process. You can override this with the `postfixId` option.
+</Note>
+
+## Configuration options
+
+The top-level `options` object accepts:
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `client` | `KafkaConfig` | — | KafkaJS [client configuration](https://kafka.js.org/docs/configuration) (brokers, clientId, SSL, SASL, etc.) |
+| `consumer` | `ConsumerConfig` | — | KafkaJS [consumer configuration](https://kafka.js.org/docs/consuming) (groupId, sessionTimeout, etc.) |
+| `run` | `Omit<ConsumerRunConfig, 'eachBatch' \| 'eachMessage'>` | — | Options passed to `consumer.run()` (e.g. `partitionsConsumedConcurrently`) |
+| `subscribe` | `Omit<ConsumerSubscribeTopics, 'topics'>` | — | Options passed to `consumer.subscribe()` (e.g. `fromBeginning`) |
+| `producer` | `ProducerConfig` | — | KafkaJS [producer configuration](https://kafka.js.org/docs/producing) |
+| `send` | `Omit<ProducerRecord, 'topic' \| 'messages'>` | — | Default options passed to `producer.send()` |
+| `postfixId` | `string` | `'-server'` / `'-client'` | Suffix appended to `clientId` and `groupId` |
+| `producerOnlyMode` | `boolean` | `false` | Start only the producer without a consumer |
+| `parser` | `KafkaParserConfig` | — | Parser configuration (e.g. `keepBinary`) |
+| `serializer` | `Serializer` | `KafkaRequestSerializer` | Custom outbound message serializer |
+| `deserializer` | `Deserializer` | `KafkaRequestDeserializer` | Custom inbound message deserializer |
+
+## Message handlers
+
+Kafka topic names are used directly as patterns.
+
+```typescript orders.controller.ts
+import { Controller } from '@nestjs/common';
+import {
+  MessagePattern,
+  EventPattern,
+  Payload,
+  Ctx,
+  KafkaContext,
+} from '@nestjs/microservices';
+
+@Controller()
+export class OrdersController {
+  @MessagePattern('orders.find')
+  find(
+    @Payload() message: { id: string },
+    @Ctx() context: KafkaContext,
+  ): { id: string; status: string } {
+    const heartbeat = context.getHeartbeat();
+    // Call heartbeat() during long-running operations to prevent consumer rebalance
+    return { id: message.id, status: 'pending' };
+  }
+
+  @EventPattern('orders.created')
+  handleCreated(@Payload() order: { id: string; amount: number }) {
+    console.log(`Order created: ${order.id}`);
+  }
+}
+```
+
+`KafkaContext` provides access to:
+- `getMessage()` — the raw KafkaJS message
+- `getPartition()` — partition number
+- `getTopic()` — topic name
+- `getConsumer()` — the KafkaJS consumer instance
+- `getHeartbeat()` — a heartbeat function to prevent consumer rebalancing
+- `getProducer()` — the KafkaJS producer instance
+
+## Client configuration
+
+```typescript app.module.ts
+import { Module } from '@nestjs/common';
+import { ClientsModule, Transport } from '@nestjs/microservices';
+
+@Module({
+  imports: [
+    ClientsModule.register([
+      {
+        name: 'ORDERS_SERVICE',
+        transport: Transport.KAFKA,
+        options: {
+          client: {
+            clientId: 'orders-client',
+            brokers: ['localhost:9092'],
+          },
+          consumer: {
+            groupId: 'orders-consumer',
+          },
+        },
+      },
+    ]),
+  ],
+})
+export class AppModule {}
+```
+
+```typescript app.service.ts
+import { Inject, Injectable, OnModuleInit } from '@nestjs/common';
+import { ClientKafka } from '@nestjs/microservices';
+import { Observable } from 'rxjs';
+
+@Injectable()
+export class AppService implements OnModuleInit {
+  constructor(
+    @Inject('ORDERS_SERVICE') private readonly client: ClientKafka,
+  ) {}
+
+  async onModuleInit() {
+    // Subscribe to reply topics before connecting
+    this.client.subscribeToResponseOf('orders.find');
+    await this.client.connect();
+  }
+
+  findOrder(id: string): Observable<{ id: string; status: string }> {
+    return this.client.send('orders.find', { id });
+  }
+
+  createOrder(order: { id: string; amount: number }): Observable<void> {
+    return this.client.emit('orders.created', order);
+  }
+}
+```
+
+<Warning>
+  Kafka request-response requires calling `client.subscribeToResponseOf(pattern)` **before** `client.connect()`. This ensures the client subscribes to the reply topic that the server will publish responses to.
+</Warning>
+
+## How request-response works in Kafka
+
+Because Kafka is a streaming platform rather than a point-to-point system, NestJS implements request-response using Kafka headers:
+
+1. The client produces a message with a `correlationId` header and a `replyTopic` header.
+2. The server reads these headers, processes the message, and produces the response to the `replyTopic`.
+3. The client consumes the response on the reply topic and matches it to the original request by `correlationId`.
+
+## Consumer from the beginning
+
+To consume messages from the beginning of a topic when the consumer group has no committed offsets:
+
+```typescript
+options: {
+  client: { brokers: ['localhost:9092'] },
+  consumer: { groupId: 'orders-consumer' },
+  subscribe: { fromBeginning: true },
+}
+```
+
+## Concurrent partition processing
+
+Use `partitionsConsumedConcurrently` in the `run` options to process multiple partitions concurrently:
+
+```typescript
+options: {
+  client: { brokers: ['localhost:9092'] },
+  consumer: { groupId: 'orders-consumer' },
+  run: { partitionsConsumedConcurrently: 3 },
+}
+```

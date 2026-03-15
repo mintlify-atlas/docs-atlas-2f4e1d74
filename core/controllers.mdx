@@ -1,0 +1,254 @@
+---
+title: 'Controllers'
+description: 'Handle incoming HTTP requests and return responses using NestJS controllers and route decorators.'
+keywords: ['nestjs', 'controllers', 'routing', 'HTTP', 'decorators', 'request', 'response']
+---
+
+Controllers are responsible for handling incoming **requests** and returning **responses** to the client. A controller's purpose is to receive specific requests for the application — the routing mechanism determines which controller handles which requests.
+
+You create a controller by applying the `@Controller()` decorator to a class. The decorator accepts an optional route path prefix that is prepended to every route handler defined in the class.
+
+## Basic controller
+
+```typescript cats/cats.controller.ts
+import { Controller, Get, Post, Body, Param } from '@nestjs/common';
+import { CatsService } from './cats.service';
+import { CreateCatDto } from './dto/create-cat.dto';
+
+@Controller('cats')
+export class CatsController {
+  constructor(private readonly catsService: CatsService) {}
+
+  @Post()
+  create(@Body() createCatDto: CreateCatDto) {
+    return this.catsService.create(createCatDto);
+  }
+
+  @Get()
+  findAll() {
+    return this.catsService.findAll();
+  }
+
+  @Get(':id')
+  findOne(@Param('id') id: string) {
+    return this.catsService.findOne(+id);
+  }
+}
+```
+
+<Note>
+  Remember to declare your controller in a module's `controllers` array, otherwise Nest won't know it exists.
+</Note>
+
+## Route decorators
+
+Nest provides decorators for all standard HTTP methods:
+
+| Decorator      | HTTP method |
+| -------------- | ----------- |
+| `@Get()`       | GET         |
+| `@Post()`      | POST        |
+| `@Put()`       | PUT         |
+| `@Delete()`    | DELETE      |
+| `@Patch()`     | PATCH       |
+| `@Options()`   | OPTIONS     |
+| `@Head()`      | HEAD        |
+| `@All()`       | All methods |
+
+Each decorator accepts an optional path string that is appended to the controller prefix:
+
+```typescript
+@Get('profile')
+getProfile() {
+  // handles GET /cats/profile
+}
+```
+
+## Route parameters
+
+Use `@Param()` to capture named route parameters:
+
+```typescript
+@Get(':id')
+findOne(@Param('id') id: string) {
+  return this.catsService.findOne(+id);
+}
+```
+
+You can also capture all params at once:
+
+```typescript
+@Get(':breed/:id')
+findByBreed(@Param() params: { breed: string; id: string }) {
+  return params;
+}
+```
+
+## Query parameters
+
+Use `@Query()` to access query string parameters:
+
+```typescript
+@Get()
+findAll(@Query('limit') limit: string, @Query('offset') offset: string) {
+  return this.catsService.findAll({ limit: +limit, offset: +offset });
+}
+```
+
+## Request body
+
+Use `@Body()` to extract the request body. Pair it with a DTO class for type safety and validation:
+
+```typescript cats/dto/create-cat.dto.ts
+import { IsString, IsInt } from 'class-validator';
+
+export class CreateCatDto {
+  @IsString()
+  readonly name: string;
+
+  @IsInt()
+  readonly age: number;
+
+  @IsString()
+  readonly breed: string;
+}
+```
+
+```typescript
+@Post()
+create(@Body() createCatDto: CreateCatDto) {
+  return this.catsService.create(createCatDto);
+}
+```
+
+## Request and response objects
+
+You can access the underlying platform request and response objects directly using `@Req()` and `@Res()`. Nest works on top of Express (or Fastify), so the object types are those of the underlying platform.
+
+```typescript
+import { Controller, Get, Req, Res } from '@nestjs/common';
+import { Request, Response } from 'express';
+
+@Controller('cats')
+export class CatsController {
+  @Get()
+  findAll(@Req() request: Request, @Res() response: Response) {
+    response.status(200).json([]);
+  }
+}
+```
+
+<Warning>
+  When you inject `@Res()`, you become responsible for managing the response. Nest's built-in response handling (including interceptors that transform the response) is bypassed unless you pass `passthrough: true` to the decorator: `@Res({ passthrough: true })`.
+</Warning>
+
+## Status codes
+
+The default status code for GET, POST (201), and other handlers follows HTTP conventions. Override it with `@HttpCode()`:
+
+```typescript
+import { Post, HttpCode } from '@nestjs/common';
+
+@Post()
+@HttpCode(204)
+remove() {
+  // returns 204 No Content
+}
+```
+
+## Response headers
+
+Use `@Header()` to set a custom response header:
+
+```typescript
+import { Get, Header } from '@nestjs/common';
+
+@Get()
+@Header('Cache-Control', 'no-store')
+findAll() {
+  return [];
+}
+```
+
+## Redirects
+
+Use `@Redirect()` to redirect a response to a different URL. The decorator takes a URL and an optional status code (defaults to 302):
+
+```typescript
+import { Get, Redirect } from '@nestjs/common';
+
+@Get('docs')
+@Redirect('https://docs.nestjs.com', 301)
+getDocs() {}
+```
+
+To redirect dynamically, return an object with `url` and optionally `statusCode` from the handler — it will override the decorator values:
+
+```typescript
+@Get('docs')
+@Redirect('https://docs.nestjs.com')
+getDocs(@Query('version') version: string) {
+  if (version === 'v2') {
+    return { url: 'https://docs.nestjs.com/v2' };
+  }
+}
+```
+
+## Route wildcards
+
+Pattern-based routes are supported. The asterisk (`*`) matches any combination of characters:
+
+```typescript
+@Get('ab*cd')
+findAll() {
+  // matches abcd, ab_cd, abecd, etc.
+}
+```
+
+<Note>
+  Fastify uses a different routing library and does not support wildcard routes in the same way. Check the Fastify docs for its pattern syntax.
+</Note>
+
+## Async handlers
+
+Nest resolves `Promise` values automatically. You can use `async/await` or return an RxJS `Observable` stream — Nest subscribes to the source and takes the last emitted value:
+
+<CodeGroup>
+
+```typescript async/await
+@Get()
+async findAll(): Promise<Cat[]> {
+  return this.catsService.findAll();
+}
+```
+
+```typescript RxJS Observable
+import { Observable, of } from 'rxjs';
+
+@Get()
+findAll(): Observable<Cat[]> {
+  return of([]);
+}
+```
+
+</CodeGroup>
+
+## Controller options
+
+Beyond a path prefix, `@Controller()` accepts an options object for advanced configuration:
+
+```typescript
+@Controller({
+  path: 'cats',
+  host: 'api.example.com',
+  version: '1',
+})
+export class CatsController {}
+```
+
+| Option    | Description |
+| --------- | ----------- |
+| `path`    | Route prefix (equivalent to passing a string directly). |
+| `host`    | Restrict the controller to requests with a matching `Host` header. |
+| `version` | Bind all routes to a specific API version. |
+| `scope`   | Provider scope (`DEFAULT`, `REQUEST`, or `TRANSIENT`). |

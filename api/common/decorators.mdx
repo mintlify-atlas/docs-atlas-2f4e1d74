@@ -1,0 +1,136 @@
+---
+title: Decorators
+description: Complete reference for all decorators exported from @nestjs/common.
+---
+
+All decorators listed here are exported from `@nestjs/common`.
+
+---
+
+## Class decorators
+
+Applied to a class declaration.
+
+| Decorator | Usage | Description |
+|---|---|---|
+| `@Controller(prefix?)` | `@Controller('users')` | Marks a class as an HTTP controller with an optional route prefix. |
+| `@Injectable(options?)` | `@Injectable()` | Marks a class as a provider available for injection. |
+| `@Module(metadata)` | `@Module({...})` | Marks a class as a Nest module. |
+| `@Global()` | `@Global()` | Makes a module globally scoped. |
+| `@Catch(...exceptions)` | `@Catch(HttpException)` | Marks a class as an exception filter for the specified exception types. |
+
+---
+
+## Method decorators
+
+Applied to methods inside a controller or class.
+
+### HTTP route mapping
+
+| Decorator | HTTP method | Signature |
+|---|---|---|
+| `@Get(path?)` | GET | `(path?: string \| string[]) => MethodDecorator` |
+| `@Post(path?)` | POST | `(path?: string \| string[]) => MethodDecorator` |
+| `@Put(path?)` | PUT | `(path?: string \| string[]) => MethodDecorator` |
+| `@Patch(path?)` | PATCH | `(path?: string \| string[]) => MethodDecorator` |
+| `@Delete(path?)` | DELETE | `(path?: string \| string[]) => MethodDecorator` |
+| `@Options(path?)` | OPTIONS | `(path?: string \| string[]) => MethodDecorator` |
+| `@Head(path?)` | HEAD | `(path?: string \| string[]) => MethodDecorator` |
+| `@All(path?)` | All methods | `(path?: string \| string[]) => MethodDecorator` |
+| `@Search(path?)` | SEARCH | `(path?: string \| string[]) => MethodDecorator` |
+| `@Sse(path?)` | GET (SSE) | `(path?: string) => MethodDecorator` |
+
+### Response control
+
+| Decorator | Signature | Description |
+|---|---|---|
+| `@HttpCode(statusCode)` | `(statusCode: number) => MethodDecorator` | Overrides the default HTTP response status code. |
+| `@Header(name, value)` | `(name: string, value: string \| (() => string)) => MethodDecorator` | Sets a custom response header. |
+| `@Redirect(url?, statusCode?)` | `(url?: string, statusCode?: number) => MethodDecorator` | Redirects to the specified URL. |
+| `@Render(template)` | `(template: string) => MethodDecorator` | Specifies the view template to render (MVC). |
+
+### Enhancers
+
+These decorators apply at either the class or method level.
+
+| Decorator | Signature | Description |
+|---|---|---|
+| `@UseGuards(...guards)` | `(CanActivate \| Function)[] => ClassDecorator & MethodDecorator` | Binds one or more guards. |
+| `@UseInterceptors(...interceptors)` | `(NestInterceptor \| Function)[] => ClassDecorator & MethodDecorator` | Binds one or more interceptors. |
+| `@UsePipes(...pipes)` | `(PipeTransform \| Function)[] => ClassDecorator & MethodDecorator` | Binds one or more pipes. |
+| `@UseFilters(...filters)` | `(ExceptionFilter \| Function)[] => ClassDecorator & MethodDecorator` | Binds one or more exception filters. |
+
+### Metadata
+
+| Decorator | Signature | Description |
+|---|---|---|
+| `@SetMetadata(key, value)` | `<K, V>(key: K, value: V) => CustomDecorator<K>` | Attaches custom metadata to a class or method. Readable via `Reflector`. |
+| `@Version(version)` | `(version: VersionValue) => MethodDecorator` | Sets the version for a specific route handler. |
+
+---
+
+## Parameter decorators
+
+Applied to constructor parameters or route handler parameters.
+
+### Request extraction
+
+| Decorator | Extracts | Pipe support |
+|---|---|---|
+| `@Param(property?, ...pipes)` | `req.params` or a named param | Yes |
+| `@Query(property?, ...pipes)` | `req.query` or a named query param | Yes |
+| `@Body(property?, ...pipes)` | `req.body` or a named body property | Yes |
+| `@Headers(property?)` | `req.headers` or a single header | No |
+| `@Ip()` | `req.ip` | No |
+| `@HostParam(property?)` | Host route parameters | No |
+| `@Session()` | `req.session` | No |
+| `@Req()` / `@Request()` | Full request object | No |
+| `@Res(options?)` / `@Response(options?)` | Full response object | No |
+| `@Next()` | `next` middleware function | No |
+| `@RawBody(...pipes)` | `req.rawBody` (Buffer) | Yes |
+| `@UploadedFile(fileKey?, ...pipes)` | Single uploaded file from multer | Yes |
+| `@UploadedFiles(...pipes)` | All uploaded files from multer | Yes |
+
+### DI parameter decorators
+
+| Decorator | Signature | Description |
+|---|---|---|
+| `@Inject(token?)` | `(token?: InjectionToken \| ForwardReference) => PropertyDecorator & ParameterDecorator` | Injects a provider by token. |
+| `@Optional()` | `() => PropertyDecorator & ParameterDecorator` | Marks an injected dependency as optional. |
+
+---
+
+## Utility decorators
+
+| Decorator / function | Signature | Description |
+|---|---|---|
+| `@ApplyDecorators(...decorators)` | `(...decorators: (ClassDecorator \| MethodDecorator \| PropertyDecorator)[]) => ClassDecorator & MethodDecorator & PropertyDecorator` | Composes multiple decorators into one. |
+| `@Bind(...pipes)` | `(...decorators: any[]) => MethodDecorator` | Binds pipes to a route handler without TypeScript type metadata. |
+
+---
+
+## `@SetMetadata()` usage
+
+`@SetMetadata` stores arbitrary metadata on a class or method handler. You retrieve it inside a guard or interceptor using the `Reflector` helper.
+
+```typescript
+import { SetMetadata } from '@nestjs/common';
+
+export const Roles = (...roles: string[]) => SetMetadata('roles', roles);
+```
+
+```typescript
+import { Injectable, CanActivate, ExecutionContext } from '@nestjs/common';
+import { Reflector } from '@nestjs/core';
+
+@Injectable()
+export class RolesGuard implements CanActivate {
+  constructor(private reflector: Reflector) {}
+
+  canActivate(context: ExecutionContext): boolean {
+    const roles = this.reflector.get<string[]>('roles', context.getHandler());
+    // ...
+    return true;
+  }
+}
+```

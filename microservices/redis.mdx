@@ -1,0 +1,179 @@
+---
+title: "Redis transport"
+description: "Use Redis pub/sub as a NestJS microservice transport via the ioredis client."
+keywords: ["nestjs", "microservices", "Redis", "Transport.REDIS", "ioredis", "pub/sub", "wildcards"]
+---
+
+The Redis transport uses Redis's native publish/subscribe mechanism. NestJS creates two `ioredis` client instances per application — one subscriber and one publisher — and routes messages between them.
+
+## Installation
+
+<CodeGroup>
+
+```bash npm
+npm install ioredis
+```
+
+```bash yarn
+yarn add ioredis
+```
+
+```bash pnpm
+pnpm add ioredis
+```
+
+</CodeGroup>
+
+## Creating a Redis microservice
+
+```typescript main.ts
+import { NestFactory } from '@nestjs/core';
+import { Transport, MicroserviceOptions } from '@nestjs/microservices';
+import { AppModule } from './app.module';
+
+async function bootstrap() {
+  const app = await NestFactory.createMicroservice<MicroserviceOptions>(
+    AppModule,
+    {
+      transport: Transport.REDIS,
+      options: {
+        host: 'localhost',
+        port: 6379,
+      },
+    },
+  );
+  await app.listen();
+}
+bootstrap();
+```
+
+## Configuration options
+
+The options object extends `IORedisOptions` (all [ioredis constructor options](https://github.com/redis/ioredis) are accepted) and adds the following NestJS-specific fields:
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `host` | `string` | `'localhost'` | Redis host |
+| `port` | `number` | `6379` | Redis port |
+| `retryAttempts` | `number` | — | Maximum reconnection attempts |
+| `retryDelay` | `number` | `5000` | Milliseconds between retry attempts |
+| `wildcards` | `boolean` | `false` | Enable `psubscribe`/`pmessage` for pattern matching |
+| `serializer` | `Serializer` | `IdentitySerializer` | Custom outbound message serializer |
+| `deserializer` | `Deserializer` | `IncomingResponseDeserializer` | Custom inbound message deserializer |
+
+## Message handlers
+
+```typescript notifications.controller.ts
+import { Controller } from '@nestjs/common';
+import {
+  MessagePattern,
+  EventPattern,
+  Payload,
+  Ctx,
+  RedisContext,
+} from '@nestjs/microservices';
+
+@Controller()
+export class NotificationsController {
+  @MessagePattern('get_notifications')
+  getNotifications(@Payload() userId: string): string[] {
+    return [`Notification for ${userId}`];
+  }
+
+  @EventPattern('notification_sent')
+  handleNotification(
+    @Payload() data: { userId: string; message: string },
+    @Ctx() context: RedisContext,
+  ) {
+    console.log(`Channel: ${context.getChannel()}`);
+  }
+}
+```
+
+`RedisContext.getChannel()` returns the Redis channel name the message arrived on.
+
+## Client configuration
+
+```typescript app.module.ts
+import { Module } from '@nestjs/common';
+import { ClientsModule, Transport } from '@nestjs/microservices';
+
+@Module({
+  imports: [
+    ClientsModule.register([
+      {
+        name: 'NOTIFICATIONS_SERVICE',
+        transport: Transport.REDIS,
+        options: {
+          host: 'localhost',
+          port: 6379,
+        },
+      },
+    ]),
+  ],
+})
+export class AppModule {}
+```
+
+```typescript app.service.ts
+import { Inject, Injectable } from '@nestjs/common';
+import { ClientProxy } from '@nestjs/microservices';
+import { Observable } from 'rxjs';
+
+@Injectable()
+export class AppService {
+  constructor(
+    @Inject('NOTIFICATIONS_SERVICE') private readonly client: ClientProxy,
+  ) {}
+
+  getNotifications(userId: string): Observable<string[]> {
+    return this.client.send<string[]>('get_notifications', userId);
+  }
+
+  sendNotification(payload: { userId: string; message: string }): Observable<void> {
+    return this.client.emit('notification_sent', payload);
+  }
+}
+```
+
+## Pub/sub semantics
+
+For request-response patterns, NestJS automatically creates a reply channel named `<pattern>.reply`. The subscriber client listens on the request channel, and the publisher client writes the response back to the reply channel. This means every pattern requires two Redis channel subscriptions.
+
+<Warning>
+  Redis pub/sub does not persist messages. If a subscriber is offline when a message is published, the message is lost. For reliable delivery, consider RabbitMQ or Kafka.
+</Warning>
+
+## Wildcard patterns
+
+Set `wildcards: true` to use Redis's `PSUBSCRIBE` command, which allows glob-style patterns in your message handlers:
+
+```typescript main.ts
+options: {
+  host: 'localhost',
+  port: 6379,
+  wildcards: true,
+}
+```
+
+With wildcards enabled you can declare handlers like:
+
+```typescript
+@EventPattern('user.*')
+handleUserEvents(@Payload() data: unknown) {
+  // matches user.created, user.deleted, etc.
+}
+```
+
+## Retry strategy
+
+The `retryAttempts` and `retryDelay` options control how the `ioredis` client retries after a disconnection. When `retryAttempts` is not set, failed connections are not retried and the error is logged.
+
+```typescript
+options: {
+  host: 'localhost',
+  port: 6379,
+  retryAttempts: 10,
+  retryDelay: 3000,
+}
+```

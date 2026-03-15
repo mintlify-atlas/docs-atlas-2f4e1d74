@@ -1,0 +1,247 @@
+---
+title: 'Resolvers'
+description: 'Define GraphQL queries and types using @Resolver, @Query, @ObjectType, and @Field decorators in NestJS.'
+keywords: ['graphql', 'resolver', 'query', 'ObjectType', 'Field', 'Args', 'nestjs']
+---
+
+A resolver is a class decorated with `@Resolver()` that groups related GraphQL query and mutation handlers. Each handler method maps to a field on the root `Query` or `Mutation` type in your schema.
+
+## Defining an object type
+
+In code-first mode, you describe your schema using TypeScript classes. The `@ObjectType()` decorator marks a class as a GraphQL type, and `@Field()` marks each property as a field on that type.
+
+```typescript recipe.model.ts
+import { Field, ID, ObjectType } from '@nestjs/graphql';
+
+@ObjectType()
+export class Recipe {
+  @Field(() => ID)
+  id: string;
+
+  @Field()
+  title: string;
+
+  @Field({ nullable: true })
+  description?: string;
+
+  @Field()
+  creationDate: Date;
+
+  @Field(() => [String])
+  ingredients: string[];
+}
+```
+
+### Field options
+
+| Option | Type | Description |
+|---|---|---|
+| `nullable` | `boolean` | Marks the field as nullable in the schema (`String` becomes `String`). |
+| `description` | `string` | Adds a description that appears in introspection and the playground. |
+| `defaultValue` | `any` | Sets a default value for the field. |
+| `deprecationReason` | `string` | Marks the field as deprecated with a reason string. |
+
+### Scalar types
+
+Import built-in scalar type references from `@nestjs/graphql` when you need explicit numeric types.
+
+```typescript
+import { Field, Float, Int, ObjectType } from '@nestjs/graphql';
+
+@ObjectType()
+export class Product {
+  @Field(() => Int)
+  stock: number;
+
+  @Field(() => Float)
+  price: number;
+}
+```
+
+<Note>
+TypeScript's `number` type maps to `Float` by default. Use `() => Int` explicitly when you need an integer scalar.
+</Note>
+
+## Creating a resolver
+
+Decorate a class with `@Resolver(() => Recipe)` to associate it with the `Recipe` type. The argument tells NestJS which object type this resolver serves — it is required when you define field resolvers.
+
+```typescript recipes.resolver.ts
+import { NotFoundException } from '@nestjs/common';
+import { Args, Query, Resolver } from '@nestjs/graphql';
+import { Recipe } from './models/recipe.model';
+import { RecipesService } from './recipes.service';
+
+@Resolver(() => Recipe)
+export class RecipesResolver {
+  constructor(private readonly recipesService: RecipesService) {}
+
+  @Query(() => Recipe)
+  async recipe(@Args('id') id: string): Promise<Recipe> {
+    const recipe = await this.recipesService.findOneById(id);
+    if (!recipe) {
+      throw new NotFoundException(id);
+    }
+    return recipe;
+  }
+
+  @Query(() => [Recipe])
+  recipes(): Promise<Recipe[]> {
+    return this.recipesService.findAll();
+  }
+}
+```
+
+## Query arguments with `@Args()`
+
+Use `@Args()` to extract query arguments from the incoming request.
+
+### Named argument
+
+```typescript
+@Query(() => Recipe)
+async recipe(@Args('id') id: string): Promise<Recipe> {
+  return this.recipesService.findOneById(id);
+}
+```
+
+The generated schema field is:
+
+```graphql
+type Query {
+  recipe(id: String!): Recipe!
+}
+```
+
+### Typed argument with `@ArgsType()`
+
+For queries with multiple arguments, bundle them into an `@ArgsType()` class:
+
+```typescript recipes.args.ts
+import { ArgsType, Field, Int } from '@nestjs/graphql';
+import { Max, Min } from 'class-validator';
+
+@ArgsType()
+export class RecipesArgs {
+  @Field(() => Int)
+  @Min(0)
+  skip = 0;
+
+  @Field(() => Int)
+  @Min(1)
+  @Max(50)
+  take = 25;
+}
+```
+
+Then spread the args into the handler using the class itself:
+
+```typescript
+@Query(() => [Recipe])
+recipes(@Args() args: RecipesArgs): Promise<Recipe[]> {
+  return this.recipesService.findAll(args);
+}
+```
+
+This produces:
+
+```graphql
+type Query {
+  recipes(skip: Int! = 0, take: Int! = 25): [Recipe!]!
+}
+```
+
+## Nullable fields
+
+Pass `{ nullable: true }` to `@Field()` to make a field optional:
+
+```typescript
+@Field({ nullable: true })
+description?: string;
+```
+
+For nullable list items use `nullable: 'items'`, and for a nullable list itself use `nullable: 'itemsAndList'`.
+
+## Registering a resolver in a module
+
+Resolvers are providers. Register them in the `providers` array of a feature module and ensure the module is imported by `AppModule`.
+
+```typescript recipes.module.ts
+import { Module } from '@nestjs/common';
+import { RecipesResolver } from './recipes.resolver';
+import { RecipesService } from './recipes.service';
+
+@Module({
+  providers: [RecipesResolver, RecipesService],
+})
+export class RecipesModule {}
+```
+
+## Full working example
+
+The following three files together produce a working `recipes` query.
+
+<CodeGroup>
+
+```typescript models/recipe.model.ts
+import { Field, ID, ObjectType } from '@nestjs/graphql';
+
+@ObjectType()
+export class Recipe {
+  @Field(() => ID)
+  id: string;
+
+  @Field()
+  title: string;
+
+  @Field({ nullable: true })
+  description?: string;
+
+  @Field(() => [String])
+  ingredients: string[];
+}
+```
+
+```typescript recipes.resolver.ts
+import { NotFoundException } from '@nestjs/common';
+import { Args, Query, Resolver } from '@nestjs/graphql';
+import { Recipe } from './models/recipe.model';
+import { RecipesService } from './recipes.service';
+
+@Resolver(() => Recipe)
+export class RecipesResolver {
+  constructor(private readonly recipesService: RecipesService) {}
+
+  @Query(() => Recipe, { nullable: true })
+  async recipe(@Args('id') id: string): Promise<Recipe | null> {
+    return this.recipesService.findOneById(id);
+  }
+
+  @Query(() => [Recipe])
+  recipes(): Promise<Recipe[]> {
+    return this.recipesService.findAll();
+  }
+}
+```
+
+```typescript recipes.module.ts
+import { Module } from '@nestjs/common';
+import { RecipesResolver } from './recipes.resolver';
+import { RecipesService } from './recipes.service';
+
+@Module({
+  providers: [RecipesResolver, RecipesService],
+})
+export class RecipesModule {}
+```
+
+</CodeGroup>
+
+<Columns cols={2}>
+  <Card title="Mutations" icon="pencil" href="/graphql/mutations">
+    Handle create, update, and delete operations with @Mutation.
+  </Card>
+  <Card title="Subscriptions" icon="radio" href="/graphql/subscriptions">
+    Push real-time events to clients with @Subscription.
+  </Card>
+</Columns>

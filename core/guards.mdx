@@ -1,0 +1,209 @@
+---
+title: 'Guards'
+description: 'Implement authorization logic in NestJS using guards, the CanActivate interface, and ExecutionContext.'
+keywords: ['nestjs', 'guards', 'authorization', 'CanActivate', 'ExecutionContext', 'roles', 'JWT']
+---
+
+A guard is a class annotated with the `@Injectable()` decorator that implements the `CanActivate` interface. Guards have a **single responsibility**: they determine whether a given request is allowed to proceed to the route handler, based on conditions such as permissions, roles, or ACLs.
+
+<Note>
+  Guards are executed **after** all middleware but **before** any interceptors or pipes. This makes them the right place for authorization logic, where you know the request is valid but need to decide whether the caller has permission.
+</Note>
+
+## The `CanActivate` interface
+
+```typescript
+export interface CanActivate {
+  canActivate(
+    context: ExecutionContext,
+  ): boolean | Promise<boolean> | Observable<boolean>;
+}
+```
+
+Return `true` to allow the request to proceed. Return `false` (or throw an exception) to deny it — Nest will throw a `403 Forbidden` exception automatically when `false` is returned.
+
+## A basic auth guard
+
+```typescript common/guards/auth.guard.ts
+import { CanActivate, ExecutionContext, Injectable } from '@nestjs/common';
+import { Observable } from 'rxjs';
+
+@Injectable()
+export class AuthGuard implements CanActivate {
+  canActivate(
+    context: ExecutionContext,
+  ): boolean | Promise<boolean> | Observable<boolean> {
+    const request = context.switchToHttp().getRequest();
+    return this.validateRequest(request);
+  }
+
+  private validateRequest(request: any): boolean {
+    // Check for a valid token, session, etc.
+    return !!request.headers.authorization;
+  }
+}
+```
+
+## `ExecutionContext`
+
+`ExecutionContext` extends `ArgumentsHost` with two additional methods:
+
+| Method          | Returns |
+| --------------- | ------- |
+| `getClass()`    | The controller class that will handle the request. |
+| `getHandler()`  | The route handler method that will be called. |
+
+These methods let you read metadata attached to the controller or handler.
+
+## Role-based access control
+
+A common pattern is attaching roles metadata to route handlers and reading it inside a guard.
+
+<Steps>
+  <Step title="Create a typed metadata decorator">
+    Use `Reflector.createDecorator()` for a fully-typed experience:
+
+    ```typescript common/decorators/roles.decorator.ts
+    import { Reflector } from '@nestjs/core';
+
+    export const Roles = Reflector.createDecorator<string[]>();
+    ```
+
+    Or use `SetMetadata` directly:
+
+    ```typescript
+    import { SetMetadata } from '@nestjs/common';
+
+    export const Roles = (...roles: string[]) => SetMetadata('roles', roles);
+    ```
+  </Step>
+  <Step title="Annotate your route handler">
+    ```typescript cats/cats.controller.ts
+    import { Controller, Post, UseGuards } from '@nestjs/common';
+    import { Roles } from '../common/decorators/roles.decorator';
+    import { RolesGuard } from '../common/guards/roles.guard';
+
+    @UseGuards(RolesGuard)
+    @Controller('cats')
+    export class CatsController {
+      @Post()
+      @Roles(['admin'])
+      create() {
+        // only users with the 'admin' role can reach here
+      }
+    }
+    ```
+  </Step>
+  <Step title="Implement the guard">
+    ```typescript common/guards/roles.guard.ts
+    import { CanActivate, ExecutionContext, Injectable } from '@nestjs/common';
+    import { Reflector } from '@nestjs/core';
+    import { Roles } from '../decorators/roles.decorator';
+
+    @Injectable()
+    export class RolesGuard implements CanActivate {
+      constructor(private readonly reflector: Reflector) {}
+
+      canActivate(context: ExecutionContext): boolean {
+        const roles = this.reflector.get(Roles, context.getHandler());
+        if (!roles) {
+          return true;
+        }
+        const request = context.switchToHttp().getRequest();
+        const user = request.user;
+        const hasRole = () =>
+          user.roles.some(role => !!roles.find(item => item === role));
+
+        return user && user.roles && hasRole();
+      }
+    }
+    ```
+  </Step>
+</Steps>
+
+## Binding guards
+
+Apply guards at the method, controller, or global level with `@UseGuards()`.
+
+<Tabs>
+  <Tab title="Method scope">
+    ```typescript
+    @UseGuards(AuthGuard)
+    @Get('profile')
+    getProfile() {}
+    ```
+  </Tab>
+  <Tab title="Controller scope">
+    ```typescript
+    @UseGuards(RolesGuard)
+    @Controller('cats')
+    export class CatsController {}
+    ```
+  </Tab>
+  <Tab title="Global scope">
+    ```typescript main.ts
+    async function bootstrap() {
+      const app = await NestFactory.create(AppModule);
+      app.useGlobalGuards(new RolesGuard());
+      await app.listen(3000);
+    }
+    ```
+  </Tab>
+</Tabs>
+
+Global guards registered via `app.useGlobalGuards()` cannot inject dependencies. Register them through the module system instead:
+
+```typescript app.module.ts
+import { Module } from '@nestjs/common';
+import { APP_GUARD } from '@nestjs/core';
+import { RolesGuard } from './common/guards/roles.guard';
+
+@Module({
+  providers: [
+    {
+      provide: APP_GUARD,
+      useClass: RolesGuard,
+    },
+  ],
+})
+export class AppModule {}
+```
+
+## JWT guard pattern
+
+A typical JWT authentication guard extracts and verifies the bearer token before allowing the request through:
+
+```typescript common/guards/jwt-auth.guard.ts
+import {
+  CanActivate,
+  ExecutionContext,
+  Injectable,
+  UnauthorizedException,
+} from '@nestjs/common';
+import { JwtService } from '@nestjs/jwt';
+
+@Injectable()
+export class JwtAuthGuard implements CanActivate {
+  constructor(private jwtService: JwtService) {}
+
+  async canActivate(context: ExecutionContext): Promise<boolean> {
+    const request = context.switchToHttp().getRequest();
+    const token = this.extractTokenFromHeader(request);
+    if (!token) {
+      throw new UnauthorizedException();
+    }
+    try {
+      const payload = await this.jwtService.verifyAsync(token);
+      request.user = payload;
+    } catch {
+      throw new UnauthorizedException();
+    }
+    return true;
+  }
+
+  private extractTokenFromHeader(request: any): string | undefined {
+    const [type, token] = request.headers.authorization?.split(' ') ?? [];
+    return type === 'Bearer' ? token : undefined;
+  }
+}
+```

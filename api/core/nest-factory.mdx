@@ -1,0 +1,216 @@
+---
+title: NestFactory
+description: The NestFactory class provides static methods to create Nest application instances.
+---
+
+`NestFactory` is the primary entry point for bootstrapping a Nest application. It exposes three static factory methods that return different types of application instances depending on your use case.
+
+```typescript
+import { NestFactory } from '@nestjs/core';
+import { AppModule } from './app.module';
+
+async function bootstrap() {
+  const app = await NestFactory.create(AppModule);
+  await app.listen(3000);
+}
+bootstrap();
+```
+
+---
+
+## `NestFactory.create()`
+
+Creates an `INestApplication` instance backed by an HTTP server. By default, Nest uses Express as the underlying HTTP adapter.
+
+```typescript
+async create<T extends INestApplication = INestApplication>(
+  module: Type<any> | DynamicModule | ForwardReference | Promise<...>,
+  options?: NestApplicationOptions,
+): Promise<T>
+
+async create<T extends INestApplication = INestApplication>(
+  module: Type<any> | DynamicModule | ForwardReference | Promise<...>,
+  httpAdapter: AbstractHttpAdapter,
+  options?: NestApplicationOptions,
+): Promise<T>
+```
+
+### Parameters
+
+<ParamField path="module" type="IEntryNestModule" required>
+  The root application module class. Nest uses this module as the entry point to scan and assemble the dependency graph.
+</ParamField>
+
+<ParamField path="httpAdapter" type="AbstractHttpAdapter">
+  An optional HTTP adapter instance (e.g., `ExpressAdapter` or `FastifyAdapter`). When omitted, Nest defaults to `ExpressAdapter`. Pass a custom adapter to use a different HTTP platform.
+</ParamField>
+
+<ParamField path="options" type="NestApplicationOptions">
+  Configuration options for the application instance.
+
+  <Expandable title="NestApplicationOptions fields">
+    <ResponseField name="cors" type="boolean | CorsOptions | CorsOptionsDelegate">
+      CORS configuration. Pass `true` to enable CORS with default settings, or a `CorsOptions` object to customize behavior.
+    </ResponseField>
+    <ResponseField name="bodyParser" type="boolean" default="true">
+      Whether to register the built-in body parser middleware. Set to `false` if you want to configure body parsing manually.
+    </ResponseField>
+    <ResponseField name="httpsOptions" type="HttpsOptions">
+      HTTPS configuration object containing `key` and `cert` (or `pfx`). When provided, the application starts an HTTPS server.
+    </ResponseField>
+    <ResponseField name="rawBody" type="boolean" default="false">
+      When `true`, the raw request body is attached to `req.rawBody` as a `Buffer`.
+    </ResponseField>
+    <ResponseField name="forceCloseConnections" type="boolean">
+      Force close open HTTP keep-alive connections on shutdown. Useful when restarting the application hangs due to lingering connections.
+    </ResponseField>
+    <ResponseField name="logger" type="LoggerService | LogLevel[] | false">
+      Custom logger instance, an array of log levels to enable, or `false` to disable logging entirely.
+    </ResponseField>
+    <ResponseField name="abortOnError" type="boolean" default="true">
+      When `true` (default), the process exits on initialization errors. Pass `false` to rethrow the error instead of aborting.
+    </ResponseField>
+    <ResponseField name="bufferLogs" type="boolean" default="false">
+      Buffer log messages until `Logger#flush()` is called manually.
+    </ResponseField>
+    <ResponseField name="autoFlushLogs" type="boolean" default="true">
+      Automatically flush buffered logs when initialization completes or fails.
+    </ResponseField>
+    <ResponseField name="preview" type="boolean" default="false">
+      Run in preview mode. Providers and controllers are not instantiated or resolved. Useful for introspecting the module graph.
+    </ResponseField>
+    <ResponseField name="snapshot" type="boolean" default="false">
+      Generate a serialized dependency graph snapshot. Required by the Nest Devtools.
+    </ResponseField>
+    <ResponseField name="forceConsole" type="boolean" default="false">
+      Force the default `ConsoleLogger` to use `console.log` instead of `process.stdout.write`. Useful in test environments that buffer console output.
+    </ResponseField>
+  </Expandable>
+</ParamField>
+
+### Return type
+
+`Promise<T>` where `T extends INestApplication`. The resolved value is a fully initialized `NestApplication` instance.
+
+### Usage examples
+
+<CodeGroup>
+
+```typescript Default (Express)
+import { NestFactory } from '@nestjs/core';
+import { AppModule } from './app.module';
+
+const app = await NestFactory.create(AppModule);
+await app.listen(3000);
+```
+
+```typescript Fastify adapter
+import { NestFactory } from '@nestjs/core';
+import { FastifyAdapter, NestFastifyApplication } from '@nestjs/platform-fastify';
+import { AppModule } from './app.module';
+
+const app = await NestFactory.create<NestFastifyApplication>(
+  AppModule,
+  new FastifyAdapter(),
+);
+await app.listen(3000);
+```
+
+```typescript With options
+import { NestFactory } from '@nestjs/core';
+import { AppModule } from './app.module';
+
+const app = await NestFactory.create(AppModule, {
+  cors: true,
+  logger: ['error', 'warn'],
+  rawBody: true,
+});
+await app.listen(3000);
+```
+
+</CodeGroup>
+
+---
+
+## `NestFactory.createMicroservice()`
+
+Creates an `INestMicroservice` instance. Requires `@nestjs/microservices` to be installed.
+
+```typescript
+async createMicroservice<T extends object>(
+  moduleCls: IEntryNestModule,
+  options?: NestMicroserviceOptions & T,
+): Promise<INestMicroservice>
+```
+
+### Parameters
+
+<ParamField path="moduleCls" type="IEntryNestModule" required>
+  The root application module class.
+</ParamField>
+
+<ParamField path="options" type="NestMicroserviceOptions & T">
+  Microservice configuration options. Includes a `transport` field (from the `Transport` enum) and transport-specific `options`. Also accepts all `NestApplicationContextOptions` fields such as `logger` and `abortOnError`.
+</ParamField>
+
+### Return type
+
+`Promise<INestMicroservice>`
+
+### Usage example
+
+```typescript
+import { NestFactory } from '@nestjs/core';
+import { Transport } from '@nestjs/microservices';
+import { AppModule } from './app.module';
+
+const app = await NestFactory.createMicroservice(AppModule, {
+  transport: Transport.TCP,
+  options: { port: 3001 },
+});
+await app.listen();
+```
+
+---
+
+## `NestFactory.createApplicationContext()`
+
+Creates an `INestApplicationContext` — a lightweight application context without an HTTP server. Use this for standalone applications, CLI tools, or worker processes that only need Nest's DI system.
+
+```typescript
+async createApplicationContext(
+  moduleCls: IEntryNestModule,
+  options?: NestApplicationContextOptions,
+): Promise<INestApplicationContext>
+```
+
+### Parameters
+
+<ParamField path="moduleCls" type="IEntryNestModule" required>
+  The root application module class.
+</ParamField>
+
+<ParamField path="options" type="NestApplicationContextOptions">
+  Configuration options. Accepts all fields from `NestApplicationContextOptions` (see the options table under `create()` above), excluding the HTTP-specific fields `cors`, `bodyParser`, `httpsOptions`, `rawBody`, and `forceCloseConnections`.
+</ParamField>
+
+### Return type
+
+`Promise<INestApplicationContext>`
+
+### Usage example
+
+```typescript
+import { NestFactory } from '@nestjs/core';
+import { AppModule } from './app.module';
+import { AppService } from './app.service';
+
+const appContext = await NestFactory.createApplicationContext(AppModule);
+const appService = appContext.get(AppService);
+appService.doSomething();
+await appContext.close();
+```
+
+<Note>
+  The application context does not start an HTTP server and does not register middleware or route handlers. It only initializes the dependency injection container.
+</Note>

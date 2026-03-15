@@ -1,0 +1,231 @@
+---
+title: 'File upload'
+description: 'Handle single and multiple file uploads in NestJS using Multer interceptors and the ParseFilePipe validator.'
+keywords: ['nestjs', 'file upload', 'multer', 'FileInterceptor', 'FilesInterceptor', 'UploadedFile', 'multipart']
+---
+
+NestJS handles file uploads through [Multer](https://github.com/expressjs/multer), a Node.js middleware for `multipart/form-data`. The `@nestjs/platform-express` package (the default platform) ships with Multer support out of the box. No additional installation is required for basic use.
+
+<Note>
+File upload via Multer is only supported on the Express platform. The Fastify platform requires a different approach using `@fastify/multipart`.
+</Note>
+
+## Uploading a single file
+
+Use `FileInterceptor` to handle a single file upload. It accepts the form field name and optional Multer options:
+
+```typescript files/files.controller.ts
+import {
+  Controller,
+  Post,
+  UploadedFile,
+  UseInterceptors,
+} from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
+
+@Controller('files')
+export class FilesController {
+  @Post('upload')
+  @UseInterceptors(FileInterceptor('file'))
+  uploadFile(@UploadedFile() file: Express.Multer.File) {
+    return {
+      originalname: file.originalname,
+      mimetype: file.mimetype,
+      size: file.size,
+    };
+  }
+}
+```
+
+The `@UploadedFile()` decorator extracts the uploaded file from the request. The `Express.Multer.File` type provides:
+- `fieldname` — form field name
+- `originalname` — file name on the user's machine
+- `encoding` — encoding type
+- `mimetype` — MIME type
+- `size` — file size in bytes
+- `buffer` — file data as a `Buffer` (when using memory storage)
+- `path` / `filename` / `destination` — disk storage details
+
+## Uploading multiple files
+
+Use `FilesInterceptor` to accept multiple files under the same field name:
+
+```typescript files/files.controller.ts
+import {
+  Controller,
+  Post,
+  UploadedFiles,
+  UseInterceptors,
+} from '@nestjs/common';
+import { FilesInterceptor } from '@nestjs/platform-express';
+
+@Controller('files')
+export class FilesController {
+  @Post('upload-many')
+  @UseInterceptors(FilesInterceptor('files', 10)) // field name, max count
+  uploadFiles(@UploadedFiles() files: Array<Express.Multer.File>) {
+    return files.map(f => ({ name: f.originalname, size: f.size }));
+  }
+}
+```
+
+## Multiple fields with different names
+
+Use `FileFieldsInterceptor` when different form fields carry different files:
+
+```typescript uploads/uploads.controller.ts
+import {
+  Controller,
+  Post,
+  UploadedFiles,
+  UseInterceptors,
+} from '@nestjs/common';
+import { FileFieldsInterceptor } from '@nestjs/platform-express';
+
+@Controller('uploads')
+export class UploadsController {
+  @Post('profile')
+  @UseInterceptors(
+    FileFieldsInterceptor([
+      { name: 'avatar', maxCount: 1 },
+      { name: 'gallery', maxCount: 5 },
+    ]),
+  )
+  uploadProfile(
+    @UploadedFiles()
+    files: {
+      avatar?: Express.Multer.File[];
+      gallery?: Express.Multer.File[];
+    },
+  ) {
+    return {
+      avatar: files.avatar?.[0]?.originalname,
+      gallery: files.gallery?.map(f => f.originalname),
+    };
+  }
+}
+```
+
+## Validating uploaded files
+
+Use `ParseFilePipe` with built-in validators to enforce file constraints before the handler runs:
+
+```typescript files/files.controller.ts
+import {
+  Controller,
+  Post,
+  UploadedFile,
+  UseInterceptors,
+  ParseFilePipe,
+  MaxFileSizeValidator,
+  FileTypeValidator,
+} from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
+
+@Controller('files')
+export class FilesController {
+  @Post('upload')
+  @UseInterceptors(FileInterceptor('file'))
+  uploadFile(
+    @UploadedFile(
+      new ParseFilePipe({
+        validators: [
+          new MaxFileSizeValidator({ maxSize: 5 * 1024 * 1024 }), // 5 MB
+          new FileTypeValidator({ fileType: 'image/jpeg' }),
+        ],
+      }),
+    )
+    file: Express.Multer.File,
+  ) {
+    return { name: file.originalname };
+  }
+}
+```
+
+If validation fails, Nest throws a `400 Bad Request` before your handler executes.
+
+<Tip>
+`FileTypeValidator` checks the MIME type reported by Multer, which is derived from the file extension. For production use, consider validating the actual file signature (magic bytes) using a library like `file-type`.
+</Tip>
+
+## Storing files on disk
+
+By default, Multer stores files in memory. To persist files to disk, configure `diskStorage`:
+
+```typescript files/files.controller.ts
+import { Controller, Post, UploadedFile, UseInterceptors } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { diskStorage } from 'multer';
+import { extname } from 'path';
+
+@Controller('files')
+export class FilesController {
+  @Post('upload')
+  @UseInterceptors(
+    FileInterceptor('file', {
+      storage: diskStorage({
+        destination: './uploads',
+        filename: (_req, file, callback) => {
+          const uniqueSuffix =
+            Date.now() + '-' + Math.round(Math.random() * 1e9);
+          callback(null, `${uniqueSuffix}${extname(file.originalname)}`);
+        },
+      }),
+    }),
+  )
+  uploadFile(@UploadedFile() file: Express.Multer.File) {
+    return { path: file.path };
+  }
+}
+```
+
+## MulterModule for global options
+
+Register `MulterModule` in a feature module to share Multer configuration across multiple interceptors:
+
+```typescript files/files.module.ts
+import { Module } from '@nestjs/common';
+import { MulterModule } from '@nestjs/platform-express';
+import { FilesController } from './files.controller';
+import { FilesService } from './files.service';
+
+@Module({
+  imports: [
+    MulterModule.register({
+      limits: {
+        fileSize: 10 * 1024 * 1024, // 10 MB global limit
+      },
+    }),
+  ],
+  controllers: [FilesController],
+  providers: [FilesService],
+})
+export class FilesModule {}
+```
+
+For async configuration (e.g., reading limits from `ConfigService`):
+
+```typescript files/files.module.ts
+import { Module } from '@nestjs/common';
+import { ConfigModule, ConfigService } from '@nestjs/config';
+import { MulterModule } from '@nestjs/platform-express';
+
+@Module({
+  imports: [
+    MulterModule.registerAsync({
+      imports: [ConfigModule],
+      inject: [ConfigService],
+      useFactory: (config: ConfigService) => ({
+        limits: {
+          fileSize: config.get<number>('UPLOAD_MAX_SIZE'),
+        },
+      }),
+    }),
+  ],
+})
+export class FilesModule {}
+```
+
+<Warning>
+Never trust the file name or MIME type supplied by the client without additional validation. Sanitize file names before saving them to disk to prevent path traversal attacks.
+</Warning>

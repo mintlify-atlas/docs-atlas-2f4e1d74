@@ -1,0 +1,215 @@
+---
+title: 'Caching'
+description: 'Add in-memory and distributed caching to NestJS applications using @nestjs/cache-manager.'
+keywords: ['nestjs', 'caching', 'cache-manager', 'redis', 'interceptor', 'ttl', 'CacheModule']
+---
+
+Caching reduces latency and database load by storing frequently-accessed data in fast in-memory storage. NestJS provides a cache abstraction through `@nestjs/cache-manager`, built on top of the `cache-manager` library.
+
+## Installation
+
+<CodeGroup>
+
+```bash npm
+npm install @nestjs/cache-manager cache-manager
+```
+
+```bash yarn
+yarn add @nestjs/cache-manager cache-manager
+```
+
+</CodeGroup>
+
+## Setting up CacheModule
+
+Register `CacheModule` in your `AppModule`:
+
+```typescript app.module.ts
+import { Module } from '@nestjs/common';
+import { CacheModule } from '@nestjs/cache-manager';
+
+@Module({
+  imports: [
+    CacheModule.register({
+      ttl: 60, // seconds
+      max: 100, // maximum number of items in cache
+    }),
+  ],
+})
+export class AppModule {}
+```
+
+To make the module available throughout the application without importing it in every feature module:
+
+```typescript app.module.ts
+CacheModule.register({
+  isGlobal: true,
+  ttl: 60,
+  max: 100,
+})
+```
+
+## Automatic caching with CacheInterceptor
+
+`CacheInterceptor` automatically caches the response of a GET endpoint based on its URL. Apply it at the controller or route level:
+
+```typescript cats/cats.controller.ts
+import { Controller, Get, UseInterceptors } from '@nestjs/common';
+import { CacheInterceptor } from '@nestjs/cache-manager';
+
+@UseInterceptors(CacheInterceptor)
+@Controller('cats')
+export class CatsController {
+  @Get()
+  findAll() {
+    return []; // response is cached per URL
+  }
+}
+```
+
+To apply it globally, register it as an application-wide interceptor:
+
+```typescript app.module.ts
+import { Module } from '@nestjs/common';
+import { APP_INTERCEPTOR } from '@nestjs/core';
+import { CacheModule, CacheInterceptor } from '@nestjs/cache-manager';
+
+@Module({
+  imports: [CacheModule.register({ isGlobal: true })],
+  providers: [
+    {
+      provide: APP_INTERCEPTOR,
+      useClass: CacheInterceptor,
+    },
+  ],
+})
+export class AppModule {}
+```
+
+## Manual cache management
+
+Inject the cache manager directly using the `CACHE_MANAGER` token to get, set, and delete entries programmatically:
+
+```typescript items/items.service.ts
+import { Injectable, Inject } from '@nestjs/common';
+import { CACHE_MANAGER } from '@nestjs/cache-manager';
+import { Cache } from 'cache-manager';
+
+@Injectable()
+export class ItemsService {
+  constructor(@Inject(CACHE_MANAGER) private cacheManager: Cache) {}
+
+  async getItem(id: string): Promise<any> {
+    const cached = await this.cacheManager.get(`item:${id}`);
+    if (cached) {
+      return cached;
+    }
+
+    const item = await this.fetchFromDatabase(id);
+    await this.cacheManager.set(`item:${id}`, item, 120); // TTL in seconds
+    return item;
+  }
+
+  async invalidateItem(id: string): Promise<void> {
+    await this.cacheManager.del(`item:${id}`);
+  }
+
+  async clearAll(): Promise<void> {
+    await this.cacheManager.reset();
+  }
+
+  private async fetchFromDatabase(id: string): Promise<any> {
+    // database call here
+    return { id };
+  }
+}
+```
+
+## TTL per route
+
+Override the default TTL for specific routes by using `@CacheTTL()`:
+
+```typescript articles/articles.controller.ts
+import { Controller, Get } from '@nestjs/common';
+import { CacheInterceptor, CacheTTL } from '@nestjs/cache-manager';
+import { UseInterceptors } from '@nestjs/common';
+
+@UseInterceptors(CacheInterceptor)
+@Controller('articles')
+export class ArticlesController {
+  @Get('popular')
+  @CacheTTL(300) // 5 minutes
+  getPopular() {
+    return [];
+  }
+
+  @Get('latest')
+  @CacheTTL(10) // 10 seconds
+  getLatest() {
+    return [];
+  }
+}
+```
+
+## Redis store
+
+For production and multi-instance deployments, replace the default in-memory store with Redis:
+
+```bash
+npm install cache-manager-redis-yet redis
+```
+
+```typescript app.module.ts
+import { Module } from '@nestjs/common';
+import { CacheModule } from '@nestjs/cache-manager';
+import { redisStore } from 'cache-manager-redis-yet';
+
+@Module({
+  imports: [
+    CacheModule.registerAsync({
+      isGlobal: true,
+      useFactory: async () => ({
+        store: await redisStore({
+          socket: {
+            host: 'localhost',
+            port: 6379,
+          },
+        }),
+        ttl: 60,
+      }),
+    }),
+  ],
+})
+export class AppModule {}
+```
+
+<Note>
+The in-memory cache is not shared between multiple application instances. Use Redis or another distributed cache store when running more than one instance of your application.
+</Note>
+
+## Custom cache keys
+
+By default, `CacheInterceptor` uses the request URL as the cache key. Override this by extending the interceptor:
+
+```typescript common/interceptors/http-cache.interceptor.ts
+import { CacheInterceptor, ExecutionContext } from '@nestjs/cache-manager';
+import { Injectable } from '@nestjs/common';
+
+@Injectable()
+export class HttpCacheInterceptor extends CacheInterceptor {
+  trackBy(context: ExecutionContext): string | undefined {
+    const request = context.switchToHttp().getRequest();
+    const { httpAdapter } = this.httpAdapterHost;
+
+    const isGetRequest = httpAdapter.getRequestMethod(request) === 'GET';
+    if (!isGetRequest) {
+      return undefined; // do not cache non-GET requests
+    }
+
+    // include user ID in cache key for user-specific data
+    const userId = request.user?.id;
+    const url = httpAdapter.getRequestUrl(request);
+    return userId ? `user:${userId}:${url}` : url;
+  }
+}
+```

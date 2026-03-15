@@ -1,0 +1,192 @@
+---
+title: Dependency injection
+description: Custom provider shapes, injection tokens, and application-level token constants in NestJS.
+---
+
+Nest's DI system supports several provider shapes beyond a simple class decorated with `@Injectable()`. All provider shapes share a `provide` field (the injection token) and a field that tells Nest how to resolve the value.
+
+---
+
+## `InjectionToken`
+
+The type used to identify a provider in the DI container.
+
+```typescript
+type InjectionToken<T = any> = string | symbol | Type<T> | Abstract<T> | Function;
+```
+
+Any string, symbol, class, or abstract class can serve as an injection token.
+
+---
+
+## `ValueProvider`
+
+Registers a static value as a provider.
+
+```typescript
+interface ValueProvider<T = any> {
+  provide: InjectionToken;
+  useValue: T;
+}
+```
+
+<ResponseField name="provide" type="InjectionToken" required>
+  The injection token consumers use to retrieve this value.
+</ResponseField>
+<ResponseField name="useValue" type="T" required>
+  The value to inject. Can be any JavaScript value: a primitive, object, array, function, or class instance.
+</ResponseField>
+
+```typescript
+const connectionProvider = {
+  provide: 'CONNECTION',
+  useValue: { host: 'localhost', port: 5432 },
+};
+
+@Module({ providers: [connectionProvider] })
+export class DatabaseModule {}
+```
+
+---
+
+## `ClassProvider`
+
+Tells Nest to instantiate a specific class when the token is injected. Useful for swapping implementations based on environment.
+
+```typescript
+interface ClassProvider<T = any> {
+  provide: InjectionToken;
+  useClass: Type<T>;
+  scope?: Scope;
+  durable?: boolean;
+}
+```
+
+<ResponseField name="provide" type="InjectionToken" required>
+  The injection token.
+</ResponseField>
+<ResponseField name="useClass" type="Type<T>" required>
+  The class Nest should instantiate and inject.
+</ResponseField>
+<ResponseField name="scope" type="Scope">
+  Injection scope for the instantiated class.
+</ResponseField>
+<ResponseField name="durable" type="boolean">
+  Flags the provider as durable. Only valid with `scope: Scope.REQUEST`.
+</ResponseField>
+
+```typescript
+const configServiceProvider = {
+  provide: ConfigService,
+  useClass:
+    process.env.NODE_ENV === 'development'
+      ? DevelopmentConfigService
+      : ProductionConfigService,
+};
+```
+
+---
+
+## `FactoryProvider`
+
+Delegates instantiation to a factory function. The factory can declare its own dependencies via the `inject` array.
+
+```typescript
+interface FactoryProvider<T = any> {
+  provide: InjectionToken;
+  useFactory: (...args: any[]) => T | Promise<T>;
+  inject?: Array<InjectionToken | OptionalFactoryDependency>;
+  scope?: Scope;
+  durable?: boolean;
+}
+```
+
+<ResponseField name="provide" type="InjectionToken" required>
+  The injection token.
+</ResponseField>
+<ResponseField name="useFactory" type="(...args: any[]) => T | Promise<T>" required>
+  Factory function returning the provider value. Can be async.
+</ResponseField>
+<ResponseField name="inject" type="Array<InjectionToken | OptionalFactoryDependency>">
+  Providers to inject into the factory as positional arguments. The resolved values are passed to `useFactory` in order.
+</ResponseField>
+<ResponseField name="scope" type="Scope">
+  Injection scope for the factory result.
+</ResponseField>
+<ResponseField name="durable" type="boolean">
+  Flags the provider as durable. Only valid with `scope: Scope.REQUEST`.
+</ResponseField>
+
+```typescript
+const connectionFactory = {
+  provide: 'DB_CONNECTION',
+  useFactory: async (optionsProvider: OptionsProvider): Promise<Connection> => {
+    const options = optionsProvider.get();
+    return createConnection(options);
+  },
+  inject: [OptionsProvider],
+};
+```
+
+---
+
+## `ExistingProvider`
+
+Creates an alias — a second injection token that resolves to an already-registered provider.
+
+```typescript
+interface ExistingProvider<T = any> {
+  provide: InjectionToken;
+  useExisting: any;
+}
+```
+
+<ResponseField name="provide" type="InjectionToken" required>
+  The alias token.
+</ResponseField>
+<ResponseField name="useExisting" type="any" required>
+  The token of the provider to alias.
+</ResponseField>
+
+```typescript
+const loggerAliasProvider = {
+  provide: 'AliasedLoggerService',
+  useExisting: LoggerService,
+};
+```
+
+---
+
+## Application-level tokens
+
+Nest exports constants from `@nestjs/core` for registering global enhancers via the DI system. This is the recommended alternative to calling `app.useGlobal*()`, since providers registered this way are aware of the DI context and can have their own dependencies injected.
+
+| Token | Registers |
+|---|---|
+| `APP_GUARD` | A global guard |
+| `APP_PIPE` | A global pipe |
+| `APP_INTERCEPTOR` | A global interceptor |
+| `APP_FILTER` | A global exception filter |
+
+```typescript
+import { Module } from '@nestjs/common';
+import { APP_GUARD, APP_PIPE, APP_INTERCEPTOR, APP_FILTER } from '@nestjs/core';
+import { AuthGuard } from './auth/auth.guard';
+import { ValidationPipe } from '@nestjs/common';
+import { LoggingInterceptor } from './logging/logging.interceptor';
+import { HttpExceptionFilter } from './filters/http-exception.filter';
+
+@Module({
+  providers: [
+    { provide: APP_GUARD, useClass: AuthGuard },
+    { provide: APP_PIPE, useClass: ValidationPipe },
+    { provide: APP_INTERCEPTOR, useClass: LoggingInterceptor },
+    { provide: APP_FILTER, useClass: HttpExceptionFilter },
+  ],
+})
+export class AppModule {}
+```
+
+<Tip>
+  You can register multiple global enhancers of the same type by providing multiple entries with the same token. Nest applies them in registration order.
+</Tip>

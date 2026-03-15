@@ -1,0 +1,263 @@
+---
+title: 'Interceptors'
+description: 'Intercept, transform, and extend the behavior of WebSocket gateway event handlers using NestJS interceptors.'
+keywords: ['websockets', 'interceptors', 'nest', 'gateway', 'transform', 'logging']
+---
+
+Interceptors work in WebSocket gateways exactly as they do in HTTP controllers. They run around the handler execution using RxJS `Observable` chains, giving you the ability to:
+
+- Add extra logic before and after the handler runs.
+- Transform or replace the result returned by the handler.
+- Extend or override handler behavior, such as caching or logging.
+
+## How it works
+
+NestJS wraps every `@SubscribeMessage()` handler in an `Observable` execution pipeline. Each interceptor in the chain calls `next.handle()` to invoke the next interceptor (or the handler itself) and receives its return value as an `Observable<any>`. The interceptor can transform that observable with any RxJS operator.
+
+```
+client event
+   └── interceptor 1 (before)
+         └── interceptor 2 (before)
+               └── handler
+         └── interceptor 2 (after / tap / map)
+   └── interceptor 1 (after / tap / map)
+```
+
+## Writing an interceptor
+
+Implement `NestInterceptor` from `@nestjs/common`.
+
+```typescript logging.interceptor.ts
+import {
+  CallHandler,
+  ExecutionContext,
+  Injectable,
+  NestInterceptor,
+} from '@nestjs/common';
+import { Observable, tap } from 'rxjs';
+
+@Injectable()
+export class WsLoggingInterceptor implements NestInterceptor {
+  intercept(context: ExecutionContext, next: CallHandler): Observable<any> {
+    const event = context.switchToWs().getPattern();
+    const start = Date.now();
+
+    return next.handle().pipe(
+      tap(() => {
+        console.log(`[WS] ${event} — ${Date.now() - start}ms`);
+      }),
+    );
+  }
+}
+```
+
+### Accessing the WebSocket context
+
+Call `context.switchToWs()` to get a `WsArgumentsHost`:
+
+| Method | Return type | Description |
+|---|---|---|
+| `getClient<T>()` | `T` | The raw socket client. |
+| `getData<T>()` | `T` | The incoming event payload. |
+| `getPattern()` | `string` | The event name that triggered the handler. |
+
+```typescript
+const wsCtx = context.switchToWs();
+const client  = wsCtx.getClient<Socket>();
+const data    = wsCtx.getData<unknown>();
+const pattern = wsCtx.getPattern();
+```
+
+## Transforming responses
+
+Use `map` to wrap or reshape every response emitted by a handler.
+
+```typescript transform.interceptor.ts
+import {
+  CallHandler,
+  ExecutionContext,
+  Injectable,
+  NestInterceptor,
+} from '@nestjs/common';
+import { map, Observable } from 'rxjs';
+
+export interface WsResponse<T> {
+  data: T;
+  timestamp: string;
+}
+
+@Injectable()
+export class WsTransformInterceptor<T>
+  implements NestInterceptor<T, WsResponse<T>>
+{
+  intercept(
+    context: ExecutionContext,
+    next: CallHandler,
+  ): Observable<WsResponse<T>> {
+    return next.handle().pipe(
+      map(data => ({
+        data,
+        timestamp: new Date().toISOString(),
+      })),
+    );
+  }
+}
+```
+
+## Handling errors inside interceptors
+
+Use `catchError` to intercept exceptions thrown by the handler. Re-throw a `WsException` so the WebSocket exception filter handles it correctly.
+
+```typescript error.interceptor.ts
+import {
+  CallHandler,
+  ExecutionContext,
+  Injectable,
+  NestInterceptor,
+} from '@nestjs/common';
+import { catchError, Observable, throwError } from 'rxjs';
+import { WsException } from '@nestjs/websockets';
+
+@Injectable()
+export class WsErrorInterceptor implements NestInterceptor {
+  intercept(context: ExecutionContext, next: CallHandler): Observable<any> {
+    return next.handle().pipe(
+      catchError(err => {
+        if (err instanceof WsException) {
+          return throwError(() => err);
+        }
+        return throwError(() => new WsException(err.message ?? 'Internal error'));
+      }),
+    );
+  }
+}
+```
+
+## Binding interceptors
+
+### Method-scoped
+
+```typescript
+import { UseInterceptors } from '@nestjs/common';
+import { SubscribeMessage, WebSocketGateway } from '@nestjs/websockets';
+import { WsLoggingInterceptor } from './logging.interceptor';
+
+@WebSocketGateway()
+export class EventsGateway {
+  @UseInterceptors(WsLoggingInterceptor)
+  @SubscribeMessage('events')
+  handleEvent() {
+    return { status: 'ok' };
+  }
+}
+```
+
+### Gateway-scoped
+
+Applying `@UseInterceptors()` at the class level wraps every handler in the gateway.
+
+```typescript events.gateway.ts
+import { UseInterceptors } from '@nestjs/common';
+import {
+  MessageBody,
+  SubscribeMessage,
+  WebSocketGateway,
+} from '@nestjs/websockets';
+import { WsLoggingInterceptor } from './logging.interceptor';
+import { WsTransformInterceptor } from './transform.interceptor';
+
+@UseInterceptors(WsLoggingInterceptor, WsTransformInterceptor)
+@WebSocketGateway()
+export class EventsGateway {
+  @SubscribeMessage('events')
+  handleEvent(@MessageBody() data: unknown) {
+    return data;
+  }
+
+  @SubscribeMessage('ping')
+  handlePing() {
+    return 'pong';
+  }
+}
+```
+
+### Global-scoped
+
+```typescript main.ts
+import { NestFactory } from '@nestjs/core';
+import { AppModule } from './app.module';
+import { WsLoggingInterceptor } from './interceptors/logging.interceptor';
+
+async function bootstrap() {
+  const app = await NestFactory.create(AppModule);
+  app.useGlobalInterceptors(new WsLoggingInterceptor());
+  await app.listen(3000);
+}
+bootstrap();
+```
+
+<Tip>
+To use dependency injection with a global interceptor, register it through the `APP_INTERCEPTOR` token:
+
+```typescript
+import { APP_INTERCEPTOR } from '@nestjs/core';
+
+@Module({
+  providers: [
+    {
+      provide: APP_INTERCEPTOR,
+      useClass: WsLoggingInterceptor,
+    },
+  ],
+})
+export class AppModule {}
+```
+</Tip>
+
+## Caching with an interceptor
+
+The following example caches the result of a handler for a configurable TTL and returns the cached value for subsequent calls with the same payload.
+
+```typescript ws-cache.interceptor.ts
+import {
+  CallHandler,
+  ExecutionContext,
+  Injectable,
+  NestInterceptor,
+} from '@nestjs/common';
+import { Observable, of } from 'rxjs';
+import { tap } from 'rxjs/operators';
+
+@Injectable()
+export class WsCacheInterceptor implements NestInterceptor {
+  private readonly cache = new Map<string, { value: any; expiresAt: number }>();
+  private readonly ttl = 5_000; // 5 seconds
+
+  intercept(context: ExecutionContext, next: CallHandler): Observable<any> {
+    const key = JSON.stringify({
+      pattern: context.switchToWs().getPattern(),
+      data: context.switchToWs().getData(),
+    });
+
+    const cached = this.cache.get(key);
+    if (cached && cached.expiresAt > Date.now()) {
+      return of(cached.value);
+    }
+
+    return next.handle().pipe(
+      tap(value => {
+        this.cache.set(key, { value, expiresAt: Date.now() + this.ttl });
+      }),
+    );
+  }
+}
+```
+
+<Columns cols={2}>
+  <Card title="Guards" icon="shield" href="/websockets/guards">
+    Protect gateway handlers with authentication and authorization guards.
+  </Card>
+  <Card title="Adapters" icon="plug" href="/websockets/adapters">
+    Configure the underlying WebSocket adapter.
+  </Card>
+</Columns>

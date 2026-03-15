@@ -1,0 +1,177 @@
+---
+title: 'npm scripts'
+description: 'Reference for every npm script generated in a NestJS project and when to use each one.'
+keywords: ['nestjs', 'npm scripts', 'start', 'build', 'test', 'lint', 'format', 'scripts']
+---
+
+When you scaffold a project with `nest new`, the generated `package.json` includes a set of npm scripts covering development, production, testing, and code quality. Run any script with `npm run <script>` (or `yarn <script>` / `pnpm <script>`).
+
+## Development scripts
+
+### `start`
+
+```bash
+npm run start
+```
+
+Builds the project once and starts the application. The process exits if the application crashes. Use this to verify that the compiled output works, but prefer `start:dev` during day-to-day development.
+
+### `start:dev`
+
+```bash
+npm run start:dev
+```
+
+Starts the application in watch mode. The CLI monitors `src/` for changes and automatically recompiles and restarts the process. This is the primary script for local development.
+
+### `start:debug`
+
+```bash
+npm run start:debug
+```
+
+Starts the application in watch mode with the Node.js inspector enabled on `0.0.0.0:9229`. Attach any debug client (VS Code, Chrome DevTools, or `node --inspect`) to this port to set breakpoints and step through code.
+
+<Tip>
+In VS Code, create a launch configuration of type `"node"` with `"request": "attach"` and `"port": 9229` to connect to the running debug session.
+</Tip>
+
+### `start:prod`
+
+```bash
+npm run start:prod
+```
+
+Runs the compiled output directly with `node dist/main`. Use this in production after running `build`. It does not watch for changes or recompile.
+
+<Warning>
+Always run `npm run build` before `start:prod` to ensure the `dist/` folder is up to date.
+</Warning>
+
+## Build script
+
+### `build`
+
+```bash
+npm run build
+```
+
+Compiles TypeScript source from `src/` into JavaScript in `dist/` using `tsc` and `tsconfig.build.json`. Run this before deploying to production or before running `start:prod`.
+
+The underlying command is:
+
+```bash
+nest build
+```
+
+## Test scripts
+
+### `test`
+
+```bash
+npm run test
+```
+
+Runs all unit tests with Jest. By default, Jest looks for files matching `**/*.spec.ts`.
+
+### `test:watch`
+
+```bash
+npm run test:watch
+```
+
+Runs Jest in interactive watch mode. Jest re-runs only the tests affected by your most recent change. Use this during test-driven development.
+
+### `test:cov`
+
+```bash
+npm run test:cov
+```
+
+Runs all unit tests and generates a code coverage report in the `coverage/` directory. Open `coverage/lcov-report/index.html` in a browser to browse the results.
+
+### `test:e2e`
+
+```bash
+npm run test:e2e
+```
+
+Runs end-to-end tests located in the `test/` directory. These tests use `supertest` to send real HTTP requests to a fully started NestJS application. The Jest configuration for e2e tests lives in `test/jest-e2e.json`.
+
+## Code quality scripts
+
+### `lint`
+
+```bash
+npm run lint
+```
+
+Runs ESLint on all TypeScript source files and reports any errors or warnings without modifying files. Integrate this into your CI pipeline to catch style and quality issues early.
+
+To automatically fix fixable issues, run:
+
+```bash
+npm run lint -- --fix
+```
+
+### `format`
+
+```bash
+npm run format
+```
+
+Formats all TypeScript source files using Prettier. This overwrites files in place. The Prettier configuration lives in `.prettierrc`.
+
+## All scripts at a glance
+
+| Script | Command | When to use |
+|---|---|---|
+| `start` | `nest start` | Verify compiled output locally. |
+| `start:dev` | `nest start --watch` | Day-to-day development. |
+| `start:debug` | `nest start --debug --watch` | Debugging with a Node.js inspector client. |
+| `start:prod` | `node dist/main` | Run the production build. |
+| `build` | `nest build` | Compile for production or CI. |
+| `test` | `jest` | Run unit tests once. |
+| `test:watch` | `jest --watch` | Run unit tests in interactive watch mode. |
+| `test:cov` | `jest --coverage` | Run unit tests and collect coverage data. |
+| `test:e2e` | `jest --config test/jest-e2e.json` | Run end-to-end tests. |
+| `lint` | `eslint` | Check code for style and quality issues. |
+| `format` | `prettier --write` | Auto-format source files. |
+
+## Environment variables
+
+You can pass environment variables to any script directly from the shell:
+
+```bash
+NODE_ENV=production npm run start:prod
+PORT=4000 npm run start:dev
+```
+
+For persistent environment configuration, create a `.env` file at the project root and load it with `@nestjs/config`:
+
+```bash
+npm install @nestjs/config
+```
+
+```typescript app.module.ts
+import { Module } from '@nestjs/common';
+import { ConfigModule } from '@nestjs/config';
+
+@Module({
+  imports: [ConfigModule.forRoot()],
+})
+export class AppModule {}
+```
+
+<Note>
+Add `.env` to your `.gitignore` file. Never commit secrets to version control.
+</Note>
+
+<Columns cols={2}>
+  <Card title="CLI overview" icon="book" href="/cli/overview">
+    Installation and nest-cli.json configuration.
+  </Card>
+  <Card title="CLI usages" icon="terminal" href="/cli/usages">
+    Full reference for every nest command and schematic.
+  </Card>
+</Columns>

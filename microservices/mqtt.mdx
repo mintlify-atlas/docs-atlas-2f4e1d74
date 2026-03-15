@@ -1,0 +1,168 @@
+---
+title: "MQTT transport"
+description: "Use the MQTT protocol as a NestJS microservice transport — ideal for IoT devices and constrained networks."
+keywords: ["nestjs", "microservices", "MQTT", "Transport.MQTT", "mqtt", "IoT", "QoS", "MqttRecord", "MqttRecordBuilder"]
+---
+
+MQTT (Message Queuing Telemetry Transport) is a lightweight publish/subscribe protocol designed for constrained environments and high-latency networks. It is widely used in IoT applications. NestJS wraps the `mqtt` npm package.
+
+## Installation
+
+<CodeGroup>
+
+```bash npm
+npm install mqtt
+```
+
+```bash yarn
+yarn add mqtt
+```
+
+```bash pnpm
+pnpm add mqtt
+```
+
+</CodeGroup>
+
+## Creating an MQTT microservice
+
+```typescript main.ts
+import { NestFactory } from '@nestjs/core';
+import { Transport, MicroserviceOptions } from '@nestjs/microservices';
+import { AppModule } from './app.module';
+
+async function bootstrap() {
+  const app = await NestFactory.createMicroservice<MicroserviceOptions>(
+    AppModule,
+    {
+      transport: Transport.MQTT,
+      options: {
+        url: 'mqtt://localhost:1883',
+      },
+    },
+  );
+  await app.listen();
+}
+bootstrap();
+```
+
+The default broker URL is `mqtt://localhost:1883`.
+
+## Configuration options
+
+The options object extends `MqttClientOptions` from the `mqtt` package (all broker connection options are accepted) and adds the following NestJS-specific fields:
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `url` | `string` | `'mqtt://localhost:1883'` | MQTT broker URL |
+| `subscribeOptions` | object | — | Default subscription options for all patterns |
+| `subscribeOptions.qos` | `0 \| 1 \| 2` | — | Quality of Service level for subscriptions |
+| `subscribeOptions.nl` | `boolean` | — | No Local flag (MQTT 5.0) |
+| `subscribeOptions.rap` | `boolean` | — | Retain as Published flag (MQTT 5.0) |
+| `subscribeOptions.rh` | `number` | — | Retain Handling option (MQTT 5.0) |
+| `userProperties` | `Record<string, string \| string[]>` | — | MQTT 5.0 user properties sent with every message |
+| `serializer` | `Serializer` | `MqttRecordSerializer` | Custom outbound message serializer |
+| `deserializer` | `Deserializer` | `IncomingResponseDeserializer` | Custom inbound message deserializer |
+
+## Topic-based message patterns
+
+MQTT uses topic strings as patterns. Topics use `/` as a separator and support wildcard characters:
+
+- `+` matches a single level (e.g. `sensors/+/temperature`)
+- `#` matches all remaining levels (e.g. `sensors/#`)
+
+```typescript sensors.controller.ts
+import { Controller } from '@nestjs/common';
+import {
+  MessagePattern,
+  EventPattern,
+  Payload,
+  Ctx,
+  MqttContext,
+} from '@nestjs/microservices';
+
+@Controller()
+export class SensorsController {
+  @MessagePattern('sensors/temperature/read')
+  readTemperature(): number {
+    return 21.5;
+  }
+
+  @EventPattern('sensors/+/alert')
+  handleAlert(
+    @Payload() data: { sensorId: string; value: number },
+    @Ctx() context: MqttContext,
+  ) {
+    console.log(`Topic: ${context.getTopic()}`);
+    console.log(`Packet:`, context.getPacket());
+  }
+}
+```
+
+`MqttContext.getTopic()` returns the topic the message arrived on. `MqttContext.getPacket()` returns the raw MQTT packet.
+
+## Client configuration
+
+```typescript app.module.ts
+import { Module } from '@nestjs/common';
+import { ClientsModule, Transport } from '@nestjs/microservices';
+
+@Module({
+  imports: [
+    ClientsModule.register([
+      {
+        name: 'SENSORS_SERVICE',
+        transport: Transport.MQTT,
+        options: {
+          url: 'mqtt://localhost:1883',
+        },
+      },
+    ]),
+  ],
+})
+export class AppModule {}
+```
+
+```typescript app.service.ts
+import { Inject, Injectable } from '@nestjs/common';
+import { ClientProxy } from '@nestjs/microservices';
+import { Observable } from 'rxjs';
+
+@Injectable()
+export class AppService {
+  constructor(
+    @Inject('SENSORS_SERVICE') private readonly client: ClientProxy,
+  ) {}
+
+  getTemperature(): Observable<number> {
+    return this.client.send<number>('sensors/temperature/read', {});
+  }
+
+  emitAlert(sensorId: string, value: number): Observable<void> {
+    return this.client.emit(`sensors/${sensorId}/alert`, { sensorId, value });
+  }
+}
+```
+
+## Reply topics
+
+For request-response patterns, NestJS appends `/reply` to the pattern to form the reply topic. For example, a handler registered on `sensors/temperature/read` sends responses back on `sensors/temperature/read/reply`.
+
+## Controlling QoS with `MqttRecordBuilder`
+
+When emitting messages as a client, use `MqttRecordBuilder` to set per-message QoS, retain flag, and MQTT 5.0 properties:
+
+```typescript
+import { MqttRecordBuilder } from '@nestjs/microservices';
+
+const record = new MqttRecordBuilder({ sensorId: 'abc', value: 42 })
+  .setQoS(1)
+  .setRetain(true)
+  .build();
+
+this.client.emit('sensors/abc/alert', record);
+```
+
+<Tip>
+  Use QoS level 1 or 2 for critical events that must not be lost. QoS 0 (fire-and-forget) is the default and the most performant.
+</Tip>

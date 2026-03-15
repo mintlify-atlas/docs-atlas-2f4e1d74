@@ -1,0 +1,208 @@
+---
+title: "NATS transport"
+description: "Use NATS as a NestJS microservice transport for high-throughput, cloud-native messaging with optional queue groups."
+keywords: ["nestjs", "microservices", "NATS", "Transport.NATS", "nats", "queue", "NatsRecord", "NatsRecordBuilder", "gracefulShutdown"]
+---
+
+NATS is a high-performance, cloud-native messaging system. It supports request-reply, pub/sub, and queue-subscriber patterns. NestJS wraps the official `nats` npm package.
+
+## Installation
+
+<CodeGroup>
+
+```bash npm
+npm install nats
+```
+
+```bash yarn
+yarn add nats
+```
+
+```bash pnpm
+pnpm add nats
+```
+
+</CodeGroup>
+
+## Creating a NATS microservice
+
+```typescript main.ts
+import { NestFactory } from '@nestjs/core';
+import { Transport, MicroserviceOptions } from '@nestjs/microservices';
+import { AppModule } from './app.module';
+
+async function bootstrap() {
+  const app = await NestFactory.createMicroservice<MicroserviceOptions>(
+    AppModule,
+    {
+      transport: Transport.NATS,
+      options: {
+        servers: ['nats://localhost:4222'],
+      },
+    },
+  );
+  await app.listen();
+}
+bootstrap();
+```
+
+The default server URL is `nats://localhost:4222`.
+
+## Configuration options
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `servers` | `string \| string[]` | `'nats://localhost:4222'` | NATS server URL(s) |
+| `name` | `string` | — | Client name reported to the server |
+| `user` | `string` | — | Authentication username |
+| `pass` | `string` | — | Authentication password |
+| `token` | `string` | — | Authentication token |
+| `queue` | `string` | — | Default queue group for all handlers |
+| `maxReconnectAttempts` | `number` | — | Maximum reconnect attempts (`-1` = infinite) |
+| `reconnectTimeWait` | `number` | — | Milliseconds between reconnect attempts |
+| `tls` | object | — | TLS options |
+| `gracefulShutdown` | `boolean` | `false` | Drain subscriptions before closing |
+| `gracePeriod` | `number` | `10000` | Milliseconds to wait for drain on shutdown |
+| `debug` | `boolean` | `false` | Log ping timer events |
+| `serializer` | `Serializer` | `NatsRecordSerializer` | Custom outbound message serializer |
+| `deserializer` | `Deserializer` | `NatsRequestJSONDeserializer` | Custom inbound message deserializer |
+
+## Message handlers
+
+```typescript orders.controller.ts
+import { Controller } from '@nestjs/common';
+import {
+  MessagePattern,
+  EventPattern,
+  Payload,
+  Ctx,
+  NatsContext,
+} from '@nestjs/microservices';
+
+@Controller()
+export class OrdersController {
+  @MessagePattern('orders.find')
+  find(@Payload() id: string): { id: string; status: string } {
+    return { id, status: 'pending' };
+  }
+
+  @EventPattern('orders.created')
+  handleCreated(
+    @Payload() order: { id: string },
+    @Ctx() context: NatsContext,
+  ) {
+    console.log(`Subject: ${context.getSubject()}`);
+    const headers = context.getHeaders();
+    console.log('Headers:', headers);
+  }
+}
+```
+
+`NatsContext.getSubject()` returns the NATS subject the message was published to. `NatsContext.getHeaders()` returns NATS message headers.
+
+## Client configuration
+
+```typescript app.module.ts
+import { Module } from '@nestjs/common';
+import { ClientsModule, Transport } from '@nestjs/microservices';
+
+@Module({
+  imports: [
+    ClientsModule.register([
+      {
+        name: 'ORDERS_SERVICE',
+        transport: Transport.NATS,
+        options: {
+          servers: ['nats://localhost:4222'],
+        },
+      },
+    ]),
+  ],
+})
+export class AppModule {}
+```
+
+```typescript app.service.ts
+import { Inject, Injectable } from '@nestjs/common';
+import { ClientProxy } from '@nestjs/microservices';
+import { Observable } from 'rxjs';
+
+@Injectable()
+export class AppService {
+  constructor(
+    @Inject('ORDERS_SERVICE') private readonly client: ClientProxy,
+  ) {}
+
+  findOrder(id: string): Observable<{ id: string; status: string }> {
+    return this.client.send('orders.find', id);
+  }
+
+  createOrder(order: { id: string }): Observable<void> {
+    return this.client.emit('orders.created', order);
+  }
+}
+```
+
+## Queue groups
+
+NATS queue groups allow multiple service instances to share a subscription so that each message is delivered to only one subscriber. Set `queue` in the server options to assign all handlers to a named queue group:
+
+```typescript
+options: {
+  servers: ['nats://localhost:4222'],
+  queue: 'orders-workers',
+}
+```
+
+You can also set the queue per handler using the `extras` argument on `@MessagePattern()`:
+
+```typescript
+@MessagePattern('orders.find', { queue: 'orders-workers' })
+find(@Payload() id: string) {
+  return { id };
+}
+```
+
+## Sending messages with headers using `NatsRecordBuilder`
+
+NATS supports message headers (NATS 2.2+). Use `NatsRecordBuilder` to attach headers to outgoing messages:
+
+```typescript
+import { NatsRecordBuilder } from '@nestjs/microservices';
+import { headers } from 'nats';
+
+const natsHeaders = headers();
+natsHeaders.set('x-request-id', '123');
+
+const record = new NatsRecordBuilder({ id: 'order-1' })
+  .setHeaders(natsHeaders)
+  .build();
+
+this.client.send('orders.find', record);
+```
+
+## Graceful shutdown
+
+When `gracefulShutdown` is `true`, the server drains all active subscriptions before closing the NATS connection. The `gracePeriod` option (default: 10 seconds) controls how long to wait for in-flight messages to complete.
+
+```typescript
+options: {
+  servers: ['nats://localhost:4222'],
+  gracefulShutdown: true,
+  gracePeriod: 5000,
+}
+```
+
+## Multiple servers
+
+Pass an array to `servers` to connect to a NATS cluster. The client will connect to the first available server and automatically fail over:
+
+```typescript
+options: {
+  servers: [
+    'nats://nats-1:4222',
+    'nats://nats-2:4222',
+    'nats://nats-3:4222',
+  ],
+}
+```

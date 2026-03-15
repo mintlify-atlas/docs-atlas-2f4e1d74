@@ -1,0 +1,261 @@
+---
+title: Core interfaces
+description: Key interfaces exported from @nestjs/common for building providers, guards, interceptors, filters, and middleware.
+---
+
+## Application interfaces
+
+### `INestApplicationContext`
+
+The base interface shared by all Nest application types. Provides DI lookup methods.
+
+```typescript
+interface INestApplicationContext {
+  get<T>(typeOrToken: Type<T> | InjectionToken, options?: { strict?: boolean }): T;
+  resolve<T>(typeOrToken: Type<T> | InjectionToken): Promise<T>;
+  select<T>(module: Type<T>): INestApplicationContext;
+  init(): Promise<this>;
+  close(): Promise<void>;
+  enableShutdownHooks(signals?: ShutdownSignal[] | string[]): this;
+  flushLogs(): void;
+  useLogger(logger: LoggerService | LogLevel[] | false): void;
+}
+```
+
+---
+
+### `INestApplication`
+
+Extends `INestApplicationContext`. Returned by `NestFactory.create()`. Adds HTTP server management, middleware registration, and global enhancers.
+
+See [NestApplication](/api/core/nest-application) for full method documentation.
+
+---
+
+### `INestMicroservice`
+
+Extends `INestApplicationContext`. Returned by `NestFactory.createMicroservice()`. Adds `listen()` and `close()` methods appropriate for microservice transports.
+
+---
+
+## Building blocks
+
+### `CanActivate`
+
+Interface for implementing a route guard.
+
+```typescript
+interface CanActivate {
+  canActivate(
+    context: ExecutionContext,
+  ): boolean | Promise<boolean> | Observable<boolean>;
+}
+```
+
+```typescript
+import { Injectable, CanActivate, ExecutionContext } from '@nestjs/common';
+
+@Injectable()
+export class AuthGuard implements CanActivate {
+  canActivate(context: ExecutionContext): boolean {
+    const request = context.switchToHttp().getRequest();
+    return Boolean(request.user);
+  }
+}
+```
+
+---
+
+### `PipeTransform`
+
+Interface for implementing a pipe that transforms or validates input data.
+
+```typescript
+interface PipeTransform<T = any, R = any> {
+  transform(value: T, metadata: ArgumentMetadata): R;
+}
+```
+
+<ResponseField name="value" type="T">
+  The value of the argument before it reaches the route handler.
+</ResponseField>
+<ResponseField name="metadata" type="ArgumentMetadata">
+  Metadata describing the argument:
+  - `type`: `'body'`, `'query'`, `'param'`, or `'custom'`
+  - `metatype`: The TypeScript type of the parameter (if available)
+  - `data`: The string passed to the decorator (e.g., `'id'` from `@Param('id')`)
+</ResponseField>
+
+---
+
+### `NestInterceptor`
+
+Interface for implementing an interceptor.
+
+```typescript
+interface NestInterceptor<T = any, R = any> {
+  intercept(
+    context: ExecutionContext,
+    next: CallHandler<T>,
+  ): Observable<R> | Promise<Observable<R>>;
+}
+```
+
+#### `CallHandler`
+
+```typescript
+interface CallHandler<T = any> {
+  handle(): Observable<T>;
+}
+```
+
+Call `next.handle()` to invoke the route handler and receive the response as an `Observable`. Wrap it with RxJS operators to add behavior before and after the handler runs.
+
+```typescript
+import { Injectable, NestInterceptor, ExecutionContext, CallHandler } from '@nestjs/common';
+import { Observable } from 'rxjs';
+import { tap } from 'rxjs/operators';
+
+@Injectable()
+export class LoggingInterceptor implements NestInterceptor {
+  intercept(context: ExecutionContext, next: CallHandler): Observable<any> {
+    console.log('Before...');
+    return next.handle().pipe(
+      tap(() => console.log('After...')),
+    );
+  }
+}
+```
+
+---
+
+### `ExceptionFilter`
+
+Interface for implementing an exception filter.
+
+```typescript
+interface ExceptionFilter<T = any> {
+  catch(exception: T, host: ArgumentsHost): any;
+}
+```
+
+Use the `@Catch()` class decorator to bind the filter to specific exception types.
+
+---
+
+## Execution context
+
+### `ExecutionContext`
+
+Extends `ArgumentsHost`. Provides information about the controller class and handler method currently being executed.
+
+```typescript
+interface ExecutionContext extends ArgumentsHost {
+  getClass<T = any>(): Type<T>;
+  getHandler(): Function;
+}
+```
+
+<ResponseField name="getClass()" type="Type<T>">
+  Returns the class of the controller that owns the current route handler.
+</ResponseField>
+<ResponseField name="getHandler()" type="Function">
+  Returns a reference to the route handler method that will be called next.
+</ResponseField>
+
+---
+
+### `ArgumentsHost`
+
+Provides access to the arguments passed to the handler, and lets you switch between transport contexts.
+
+```typescript
+interface ArgumentsHost {
+  getArgs<T extends Array<any> = any[]>(): T;
+  getArgByIndex<T = any>(index: number): T;
+  switchToRpc(): RpcArgumentsHost;
+  switchToHttp(): HttpArgumentsHost;
+  switchToWs(): WsArgumentsHost;
+  getType<TContext extends string = ContextType>(): TContext;
+}
+```
+
+| Method | Returns | Description |
+|---|---|---|
+| `switchToHttp()` | `HttpArgumentsHost` | Gives access to `getRequest()`, `getResponse()`, `getNext()`. |
+| `switchToRpc()` | `RpcArgumentsHost` | Gives access to `getData()`, `getContext()`. |
+| `switchToWs()` | `WsArgumentsHost` | Gives access to `getData()`, `getClient()`, `getPattern()`. |
+| `getType()` | `ContextType` | Returns `'http'`, `'ws'`, or `'rpc'`. |
+
+---
+
+## Module interfaces
+
+### `NestModule`
+
+Interface for modules that need to configure middleware.
+
+```typescript
+interface NestModule {
+  configure(consumer: MiddlewareConsumer): void;
+}
+```
+
+### `MiddlewareConsumer`
+
+```typescript
+interface MiddlewareConsumer {
+  apply(...middleware: (Type<any> | Function)[]): MiddlewareConfigProxy;
+}
+```
+
+Chain `.forRoutes()` on the result of `.apply()` to restrict middleware to specific routes.
+
+```typescript
+import { Module, NestModule, MiddlewareConsumer } from '@nestjs/common';
+import { LoggerMiddleware } from './logger.middleware';
+
+@Module({})
+export class AppModule implements NestModule {
+  configure(consumer: MiddlewareConsumer) {
+    consumer
+      .apply(LoggerMiddleware)
+      .forRoutes('cats');
+  }
+}
+```
+
+### `NestMiddleware`
+
+Interface for class-based middleware.
+
+```typescript
+interface NestMiddleware<TRequest = any, TResponse = any> {
+  use(req: TRequest, res: TResponse, next: (error?: Error | any) => void): any;
+}
+```
+
+---
+
+## Provider interfaces
+
+### `ModuleMetadata`
+
+See [@Module decorator](/api/core/module#moduledecorator) for field descriptions.
+
+### `DynamicModule`
+
+See [DynamicModule interface](/api/core/module#dynamicmodule-interface).
+
+### `Provider`
+
+```typescript
+type Provider<T = any> =
+  | Type<any>
+  | ClassProvider<T>
+  | ValueProvider<T>
+  | FactoryProvider<T>
+  | ExistingProvider<T>;
+```
+
+See [Dependency injection](/api/core/dependency-injection) for documentation on each provider shape.

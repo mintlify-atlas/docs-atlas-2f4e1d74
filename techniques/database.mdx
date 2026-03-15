@@ -1,0 +1,324 @@
+---
+title: 'Database'
+description: 'Connect NestJS to SQL and NoSQL databases using TypeORM and Mongoose integrations.'
+keywords: ['nestjs', 'database', 'typeorm', 'mongoose', 'mongodb', 'postgres', 'mysql', 'repository pattern']
+---
+
+NestJS is database-agnostic and works with any Node.js ORM or query builder. The `@nestjs/typeorm` and `@nestjs/mongoose` packages provide first-class integration with TypeORM and Mongoose, respectively.
+
+## TypeORM
+
+TypeORM is a full-featured ORM that supports PostgreSQL, MySQL, MariaDB, SQLite, Microsoft SQL Server, and more.
+
+### Installation
+
+<CodeGroup>
+
+```bash PostgreSQL
+npm install @nestjs/typeorm typeorm pg
+```
+
+```bash MySQL
+npm install @nestjs/typeorm typeorm mysql2
+```
+
+```bash SQLite
+npm install @nestjs/typeorm typeorm better-sqlite3
+```
+
+</CodeGroup>
+
+### Connecting to the database
+
+Import `TypeOrmModule.forRoot()` in your root `AppModule` with your connection options:
+
+```typescript app.module.ts
+import { Module } from '@nestjs/common';
+import { TypeOrmModule } from '@nestjs/typeorm';
+import { User } from './users/user.entity';
+
+@Module({
+  imports: [
+    TypeOrmModule.forRoot({
+      type: 'postgres',
+      host: 'localhost',
+      port: 5432,
+      username: 'postgres',
+      password: 'password',
+      database: 'myapp',
+      entities: [User],
+      synchronize: true, // do not use in production
+    }),
+  ],
+})
+export class AppModule {}
+```
+
+<Warning>
+Set `synchronize: true` only during development. It automatically applies schema changes and can cause data loss in production. Use TypeORM migrations instead.
+</Warning>
+
+<Accordion title="TypeOrmModule.forRoot() configuration options">
+
+| Option | Type | Description |
+| ------ | ---- | ----------- |
+| `type` | string | Database driver: `'postgres'`, `'mysql'`, `'mariadb'`, `'sqlite'`, `'mssql'`, etc. |
+| `host` | string | Database host. |
+| `port` | number | Database port. |
+| `username` | string | Database user. |
+| `password` | string | Database password. |
+| `database` | string | Database name. |
+| `entities` | array | Entity classes or glob patterns to register. |
+| `synchronize` | boolean | Auto-sync schema on startup. |
+| `logging` | boolean | Enable query logging. |
+| `migrations` | array | Migration files or classes. |
+| `ssl` | object | SSL connection options. |
+| `autoLoadEntities` | boolean | Automatically load entities registered with `forFeature()`. |
+
+</Accordion>
+
+### Defining entities
+
+An entity maps to a database table. Decorate a class with `@Entity()` and use column decorators to define the schema:
+
+```typescript users/user.entity.ts
+import {
+  Entity,
+  Column,
+  PrimaryGeneratedColumn,
+  CreateDateColumn,
+} from 'typeorm';
+
+@Entity()
+export class User {
+  @PrimaryGeneratedColumn()
+  id: number;
+
+  @Column()
+  name: string;
+
+  @Column({ unique: true })
+  email: string;
+
+  @Column({ select: false }) // excluded from SELECT by default
+  password: string;
+
+  @CreateDateColumn()
+  createdAt: Date;
+}
+```
+
+### Repository pattern
+
+TypeORM provides a `Repository<T>` for each entity. Inject it into a service using `@InjectRepository()`:
+
+<Steps>
+  <Step title="Register the entity in the feature module">
+    ```typescript users/users.module.ts
+    import { Module } from '@nestjs/common';
+    import { TypeOrmModule } from '@nestjs/typeorm';
+    import { UsersService } from './users.service';
+    import { UsersController } from './users.controller';
+    import { User } from './user.entity';
+
+    @Module({
+      imports: [TypeOrmModule.forFeature([User])],
+      providers: [UsersService],
+      controllers: [UsersController],
+      exports: [UsersService],
+    })
+    export class UsersModule {}
+    ```
+  </Step>
+  <Step title="Inject the repository into the service">
+    ```typescript users/users.service.ts
+    import { Injectable } from '@nestjs/common';
+    import { InjectRepository } from '@nestjs/typeorm';
+    import { Repository } from 'typeorm';
+    import { User } from './user.entity';
+
+    @Injectable()
+    export class UsersService {
+      constructor(
+        @InjectRepository(User)
+        private usersRepository: Repository<User>,
+      ) {}
+
+      findAll(): Promise<User[]> {
+        return this.usersRepository.find();
+      }
+
+      findOne(id: number): Promise<User | null> {
+        return this.usersRepository.findOneBy({ id });
+      }
+
+      async create(user: Partial<User>): Promise<User> {
+        const newUser = this.usersRepository.create(user);
+        return this.usersRepository.save(newUser);
+      }
+
+      async remove(id: number): Promise<void> {
+        await this.usersRepository.delete(id);
+      }
+    }
+    ```
+  </Step>
+</Steps>
+
+### Async configuration
+
+To read database credentials from `ConfigService`, use `forRootAsync()`:
+
+```typescript app.module.ts
+import { Module } from '@nestjs/common';
+import { ConfigModule, ConfigService } from '@nestjs/config';
+import { TypeOrmModule } from '@nestjs/typeorm';
+
+@Module({
+  imports: [
+    ConfigModule.forRoot(),
+    TypeOrmModule.forRootAsync({
+      imports: [ConfigModule],
+      inject: [ConfigService],
+      useFactory: (config: ConfigService) => ({
+        type: 'postgres',
+        host: config.get('DB_HOST'),
+        port: config.get<number>('DB_PORT'),
+        username: config.get('DB_USER'),
+        password: config.get('DB_PASSWORD'),
+        database: config.get('DB_NAME'),
+        autoLoadEntities: true,
+        synchronize: false,
+      }),
+    }),
+  ],
+})
+export class AppModule {}
+```
+
+---
+
+## Mongoose
+
+Mongoose is the most popular Object Document Mapper (ODM) for MongoDB.
+
+### Installation
+
+<CodeGroup>
+
+```bash npm
+npm install @nestjs/mongoose mongoose
+```
+
+```bash yarn
+yarn add @nestjs/mongoose mongoose
+```
+
+</CodeGroup>
+
+### Connecting to MongoDB
+
+```typescript app.module.ts
+import { Module } from '@nestjs/common';
+import { MongooseModule } from '@nestjs/mongoose';
+
+@Module({
+  imports: [
+    MongooseModule.forRoot('mongodb://localhost:27017/myapp'),
+  ],
+})
+export class AppModule {}
+```
+
+### Defining schemas
+
+Define schemas using Mongoose decorators from `@nestjs/mongoose`:
+
+```typescript cats/schemas/cat.schema.ts
+import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
+import { HydratedDocument } from 'mongoose';
+
+export type CatDocument = HydratedDocument<Cat>;
+
+@Schema()
+export class Cat {
+  @Prop({ required: true })
+  name: string;
+
+  @Prop()
+  age: number;
+
+  @Prop()
+  breed: string;
+}
+
+export const CatSchema = SchemaFactory.createForClass(Cat);
+```
+
+### Registering schemas and injecting models
+
+<Steps>
+  <Step title="Register the schema in the feature module">
+    ```typescript cats/cats.module.ts
+    import { Module } from '@nestjs/common';
+    import { MongooseModule } from '@nestjs/mongoose';
+    import { CatsService } from './cats.service';
+    import { CatsController } from './cats.controller';
+    import { Cat, CatSchema } from './schemas/cat.schema';
+
+    @Module({
+      imports: [
+        MongooseModule.forFeature([{ name: Cat.name, schema: CatSchema }]),
+      ],
+      providers: [CatsService],
+      controllers: [CatsController],
+    })
+    export class CatsModule {}
+    ```
+  </Step>
+  <Step title="Inject the model into the service">
+    ```typescript cats/cats.service.ts
+    import { Injectable } from '@nestjs/common';
+    import { InjectModel } from '@nestjs/mongoose';
+    import { Model } from 'mongoose';
+    import { Cat, CatDocument } from './schemas/cat.schema';
+
+    @Injectable()
+    export class CatsService {
+      constructor(
+        @InjectModel(Cat.name) private catModel: Model<CatDocument>,
+      ) {}
+
+      async findAll(): Promise<Cat[]> {
+        return this.catModel.find().exec();
+      }
+
+      async create(createCatDto: Partial<Cat>): Promise<Cat> {
+        const createdCat = new this.catModel(createCatDto);
+        return createdCat.save();
+      }
+    }
+    ```
+  </Step>
+</Steps>
+
+### Async Mongoose configuration
+
+```typescript app.module.ts
+import { Module } from '@nestjs/common';
+import { ConfigModule, ConfigService } from '@nestjs/config';
+import { MongooseModule } from '@nestjs/mongoose';
+
+@Module({
+  imports: [
+    ConfigModule.forRoot(),
+    MongooseModule.forRootAsync({
+      imports: [ConfigModule],
+      inject: [ConfigService],
+      useFactory: (config: ConfigService) =>
+        ({ uri: config.get<string>('MONGODB_URI') }),
+    }),
+  ],
+})
+export class AppModule {}
+```

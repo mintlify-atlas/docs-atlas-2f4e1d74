@@ -1,97 +1,95 @@
 ---
-title: "Introduction"
-description: "Welcome to the new home for your documentation"
+title: "NestJS Documentation"
+description: "A progressive Node.js framework for building efficient, scalable, and enterprise-grade server-side applications with TypeScript."
 ---
 
-## Setting up
+<img
+  src="https://nestjs.com/img/logo-small.svg"
+  alt="NestJS Logo"
+  width="120"
+  style={{ display: 'block', margin: '0 auto 2rem' }}
+/>
 
-Get your documentation site up and running in minutes.
+NestJS is a progressive Node.js framework for building efficient, scalable, and enterprise-grade server-side applications. It uses modern JavaScript, is built with TypeScript (while preserving compatibility with pure JavaScript), and combines elements of OOP, FP, and FRP.
 
-<Card
-  title="Start here"
-  icon="rocket"
-  href="/quickstart"
-  horizontal
->
-  Follow our three step quickstart guide.
-</Card>
+Under the hood, NestJS makes use of [Express](https://expressjs.com/) by default, but also provides compatibility with [Fastify](https://www.fastify.io/), giving you access to the myriad of third-party plugins available for both platforms.
 
-## Make it yours
+## Why NestJS?
 
-Design a docs site that looks great and empowers your users.
+NestJS provides an application architecture out of the box which allows for the effortless creation of highly testable, scalable, loosely coupled, and easily maintainable applications. The architecture is heavily inspired by Angular.
 
-<Columns cols={2}>
-  <Card
-    title="Edit locally"
-    icon="pen-to-square"
-    href="/development"
-  >
-    Edit your docs locally and preview them in real time.
+<CardGroup cols={2}>
+  <Card title="Get Started" icon="rocket" href="/quickstart">
+    Install NestJS and create your first application in minutes.
   </Card>
-  <Card
-    title="Customize your site"
-    icon="palette"
-    href="/essentials/settings"
-  >
-    Customize the design and colors of your site to match your brand.
+  <Card title="First Steps" icon="map" href="/first-steps">
+    Walk through creating your first NestJS project step by step.
   </Card>
-    <Card
-    title="Set up navigation"
-    icon="map"
-    href="/essentials/navigation"
-  >
-    Organize your docs to help users find what they need and succeed with your product.
+  <Card title="Core Concepts" icon="cubes" href="/core/modules">
+    Learn about Modules, Controllers, Providers, and more.
   </Card>
-  <Card
-    title="API documentation"
-    icon="terminal"
-    href="/api-reference/introduction"
-  >
-    Auto-generate API documentation from OpenAPI specifications.
+  <Card title="API Reference" icon="code" href="/api/core/nest-factory">
+    Explore the full API surface of NestJS.
   </Card>
-</Columns>
+</CardGroup>
 
-## Create beautiful pages
+## Key features
 
-Everything you need to create world-class documentation.
+<CardGroup cols={2}>
+  <Card title="Modular Architecture" icon="puzzle-piece">
+    Organize your application into self-contained modules that can be reused and shared across projects.
+  </Card>
+  <Card title="Dependency Injection" icon="syringe">
+    Built-in IoC container makes it easy to manage dependencies and write testable code.
+  </Card>
+  <Card title="TypeScript First" icon="brackets-curly">
+    Full TypeScript support with decorators and metadata reflection for expressive, maintainable code.
+  </Card>
+  <Card title="Platform Agnostic" icon="server">
+    Supports both Express and Fastify adapters — swap HTTP platforms without changing application code.
+  </Card>
+  <Card title="Microservices" icon="network-wired">
+    Built-in support for TCP, Redis, MQTT, NATS, RabbitMQ, Kafka, and gRPC transports.
+  </Card>
+  <Card title="WebSockets" icon="plug">
+    First-class WebSocket support with Socket.io and ws adapters via the `@WebSocketGateway` decorator.
+  </Card>
+  <Card title="GraphQL" icon="diagram-project">
+    Seamless GraphQL integration with code-first and schema-first approaches via `@nestjs/graphql`.
+  </Card>
+  <Card title="Testing Utilities" icon="vial">
+    Built-in testing module that lets you mock providers and create isolated unit tests with ease.
+  </Card>
+</CardGroup>
 
-<Columns cols={2}>
-  <Card
-    title="Write with MDX"
-    icon="pen-fancy"
-    href="/essentials/markdown"
-  >
-    Use MDX to style your docs pages.
-  </Card>
-  <Card
-    title="Code samples"
-    icon="code"
-    href="/essentials/code"
-  >
-    Add sample code to demonstrate how to use your product.
-  </Card>
-  <Card
-    title="Images"
-    icon="image"
-    href="/essentials/images"
-  >
-    Display images and other media.
-  </Card>
-  <Card
-    title="Reusable snippets"
-    icon="recycle"
-    href="/essentials/reusable-snippets"
-  >
-    Write once and reuse across your docs.
-  </Card>
-</Columns>
+## Explore the docs
 
-## Need inspiration?
-
-<Card
-  title="See complete examples"
-  icon="stars"
-  href="https://mintlify.com/customers"
->
-  Browse our showcase of exceptional documentation sites.
-</Card>
+<CardGroup cols={3}>
+  <Card title="Modules" icon="box" href="/core/modules">
+    Structure your app with feature modules
+  </Card>
+  <Card title="Controllers" icon="route" href="/core/controllers">
+    Handle incoming requests and route them
+  </Card>
+  <Card title="Providers" icon="gear" href="/core/providers">
+    Injectable services and dependencies
+  </Card>
+  <Card title="Middleware" icon="filter" href="/core/middleware">
+    Process requests before route handlers
+  </Card>
+  <Card title="Guards" icon="shield" href="/core/guards">
+    Authorize incoming requests
+  </Card>
+  <Card title="Interceptors" icon="arrows-left-right" href="/core/interceptors">
+    Transform responses and add cross-cutting concerns
+  </Card>
+  <Card title="Pipes" icon="pipe-valve" href="/core/pipes">
+    Validate and transform input data
+  </Card>
+  <Card title="Exception Filters" icon="triangle-exclamation" href="/core/exception-filters">
+    Handle and format errors globally
+  </Card>
+  <Card title="Microservices" icon="cloud" href="/microservices/overview">
+    Build distributed systems with multiple transports
+  </Card>
+</CardGroup>

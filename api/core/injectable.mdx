@@ -1,0 +1,166 @@
+---
+title: Injectable, Inject & Optional
+description: Core decorators for registering providers and managing dependency injection in NestJS.
+---
+
+## `@Injectable()`
+
+Marks a class as a Nest provider that can be managed and injected by the Nest DI system. Any class that you want to inject into another class must be decorated with `@Injectable()`.
+
+```typescript
+function Injectable(options?: InjectableOptions): ClassDecorator
+```
+
+<ParamField path="options" type="InjectableOptions">
+  Configuration object controlling the provider's injection scope.
+
+  <Expandable title="InjectableOptions fields">
+    <ResponseField name="scope" type="Scope">
+      The lifetime of the provider instance. Defaults to `Scope.DEFAULT` (singleton).
+    </ResponseField>
+    <ResponseField name="durable" type="boolean">
+      Marks the provider as durable. Only valid in combination with `scope: Scope.REQUEST`. Used with a custom context ID factory to construct lazy DI subtrees.
+    </ResponseField>
+  </Expandable>
+</ParamField>
+
+### Scope enum
+
+The `Scope` enum (imported from `@nestjs/common`) controls provider lifetime:
+
+| Value | Description |
+|---|---|
+| `Scope.DEFAULT` | **Singleton** (default). One instance is shared across the entire application. Created once and reused for every injection. |
+| `Scope.TRANSIENT` | A new instance is created each time the provider is injected. Each consumer receives its own dedicated instance. |
+| `Scope.REQUEST` | A new instance is created per incoming request. The instance is garbage collected after the request completes. |
+
+<Warning>
+  `Scope.REQUEST` providers cause any provider that depends on them to also become request-scoped. This can propagate scope up the injection chain and has performance implications.
+</Warning>
+
+### Usage examples
+
+<CodeGroup>
+
+```typescript Singleton (default)
+import { Injectable } from '@nestjs/common';
+
+@Injectable()
+export class CatsService {
+  findAll() { return []; }
+}
+```
+
+```typescript Request-scoped
+import { Injectable, Scope } from '@nestjs/common';
+
+@Injectable({ scope: Scope.REQUEST })
+export class RequestService {
+  // A new instance is created for each HTTP request
+}
+```
+
+```typescript Transient
+import { Injectable, Scope } from '@nestjs/common';
+
+@Injectable({ scope: Scope.TRANSIENT })
+export class TransientLogger {
+  // Each injecting class receives its own instance
+}
+```
+
+</CodeGroup>
+
+---
+
+## `@Inject()`
+
+A parameter and property decorator that specifies the injection token for a dependency. Use `@Inject()` when Nest cannot infer the token automatically — for example, with string or symbol tokens, or interface-based injection.
+
+```typescript
+function Inject(
+  token?: InjectionToken | ForwardReference,
+): PropertyDecorator & ParameterDecorator
+```
+
+<ParamField path="token" type="InjectionToken | ForwardReference">
+  The injection token to resolve. Can be a class, a string, a symbol, or an abstract class.
+  
+  `InjectionToken` is defined as `string | symbol | Type<T> | Abstract<T> | Function`.
+</ParamField>
+
+### Usage examples
+
+<CodeGroup>
+
+```typescript String token
+import { Injectable, Inject } from '@nestjs/common';
+
+@Injectable()
+export class CatsService {
+  constructor(
+    @Inject('CONFIG') private readonly config: AppConfig,
+  ) {}
+}
+```
+
+```typescript Symbol token
+import { Injectable, Inject } from '@nestjs/common';
+
+const DB_CONNECTION = Symbol('DB_CONNECTION');
+
+@Injectable()
+export class UsersRepository {
+  constructor(
+    @Inject(DB_CONNECTION) private readonly db: DatabaseConnection,
+  ) {}
+}
+```
+
+```typescript Forward reference (circular dependency)
+import { Injectable, Inject, forwardRef } from '@nestjs/common';
+import { CatsService } from './cats.service';
+
+@Injectable()
+export class CommonService {
+  constructor(
+    @Inject(forwardRef(() => CatsService))
+    private readonly catsService: CatsService,
+  ) {}
+}
+```
+
+</CodeGroup>
+
+<Tip>
+  When injecting class-based providers, you don't need `@Inject()` — Nest resolves the token from TypeScript's emitted type metadata automatically.
+</Tip>
+
+---
+
+## `@Optional()`
+
+A parameter and property decorator that marks an injected dependency as optional. When the provider is not registered in the current module, Nest injects `undefined` instead of throwing an error.
+
+```typescript
+function Optional(): PropertyDecorator & ParameterDecorator
+```
+
+### Usage example
+
+```typescript
+import { Injectable, Optional, Inject } from '@nestjs/common';
+
+@Injectable()
+export class HttpService {
+  constructor(
+    @Optional()
+    @Inject('HTTP_OPTIONS')
+    private readonly httpClient: HttpOptions,
+  ) {}
+}
+```
+
+<Note>
+  Always pair `@Optional()` with `@Inject()` when using a non-class injection token, so Nest knows which token to look up.
+</Note>

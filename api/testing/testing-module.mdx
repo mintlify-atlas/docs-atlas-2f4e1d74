@@ -1,0 +1,291 @@
+---
+title: TestingModule
+description: Test and TestingModule APIs for creating isolated test environments in NestJS.
+---
+
+`@nestjs/testing` provides `Test` and `TestingModule` to bootstrap modules in isolation for unit and integration tests.
+
+---
+
+## `Test.createTestingModule()`
+
+Creates a `TestingModuleBuilder` configured with the given module metadata. Call `.compile()` on the builder to produce the `TestingModule`.
+
+```typescript
+class Test {
+  static createTestingModule(
+    metadata: ModuleMetadata,
+    options?: TestingModuleOptions,
+  ): TestingModuleBuilder
+}
+```
+
+<ParamField path="metadata" type="ModuleMetadata" required>
+  Module metadata object — the same shape accepted by the `@Module()` decorator: `imports`, `controllers`, `providers`, `exports`.
+</ParamField>
+
+<ParamField path="options" type="TestingModuleOptions">
+  <Expandable title="TestingModuleOptions fields">
+    <ResponseField name="moduleIdGeneratorAlgorithm" type="'deep-hash' | 'reference'" default="'reference'">
+      Algorithm used to generate module IDs. `'deep-hash'` generates IDs based on the serialized module definition; `'reference'` assigns IDs based on object reference.
+    </ResponseField>
+  </Expandable>
+</ParamField>
+
+**Returns** `TestingModuleBuilder`
+
+```typescript
+import { Test } from '@nestjs/testing';
+import { CatsModule } from './cats.module';
+
+const moduleRef = await Test.createTestingModule({
+  imports: [CatsModule],
+}).compile();
+```
+
+---
+
+## `TestingModuleBuilder`
+
+Fluent builder returned by `Test.createTestingModule()`. Call override methods to replace providers, then call `.compile()` to build the module.
+
+### `.compile()`
+
+Asynchronously compiles the testing module and returns a `TestingModule` instance.
+
+```typescript
+async compile(
+  options?: { snapshot?: boolean; preview?: boolean },
+): Promise<TestingModule>
+```
+
+<ParamField path="options.snapshot" type="boolean" default="false">
+  Generate a serialized dependency graph snapshot.
+</ParamField>
+
+<ParamField path="options.preview" type="boolean" default="false">
+  Run in preview mode — providers and controllers are not instantiated.
+</ParamField>
+
+---
+
+### `.overrideProvider()`
+
+Overrides the provider registered under the given token. Returns an `OverrideBy` object with three resolution strategies.
+
+```typescript
+overrideProvider<T = any>(typeOrToken: T): OverrideBy
+```
+
+#### `OverrideBy` methods
+
+| Method | Signature | Description |
+|---|---|---|
+| `.useValue(value)` | `(value: any) => TestingModuleBuilder` | Replace with a static value or mock object. |
+| `.useClass(metatype)` | `(metatype: any) => TestingModuleBuilder` | Replace with a different class. |
+| `.useFactory(options)` | `(options: OverrideByFactoryOptions) => TestingModuleBuilder` | Replace with a factory function. `options.factory` is the factory; `options.inject` lists dependencies. |
+
+```typescript
+const moduleRef = await Test.createTestingModule({
+  providers: [CatsService],
+})
+  .overrideProvider(CatsService)
+  .useValue({ findAll: jest.fn().mockResolvedValue([]) })
+  .compile();
+```
+
+---
+
+### `.overrideGuard()`
+
+Overrides a guard by its class or token. Returns the same `OverrideBy` object.
+
+```typescript
+overrideGuard<T = any>(typeOrToken: T): OverrideBy
+```
+
+```typescript
+.overrideGuard(AuthGuard)
+.useValue({ canActivate: () => true })
+```
+
+---
+
+### `.overridePipe()`
+
+Overrides a pipe by its class or token.
+
+```typescript
+overridePipe<T = any>(typeOrToken: T): OverrideBy
+```
+
+---
+
+### `.overrideInterceptor()`
+
+Overrides an interceptor by its class or token.
+
+```typescript
+overrideInterceptor<T = any>(typeOrToken: T): OverrideBy
+```
+
+---
+
+### `.overrideFilter()`
+
+Overrides an exception filter by its class or token.
+
+```typescript
+overrideFilter<T = any>(typeOrToken: T): OverrideBy
+```
+
+---
+
+### `.overrideModule()`
+
+Replaces one module with another in the compiled module graph.
+
+```typescript
+overrideModule(moduleToOverride: ModuleDefinition): OverrideModule
+```
+
+`OverrideModule` exposes a single method:
+
+```typescript
+{
+  useModule: (newModule: ModuleDefinition) => TestingModuleBuilder;
+}
+```
+
+```typescript
+.overrideModule(DatabaseModule)
+.useModule(InMemoryDatabaseModule)
+```
+
+---
+
+### `.useMocker()`
+
+Registers a `MockFactory` function that Nest calls for every unregistered dependency, allowing automatic mocking.
+
+```typescript
+useMocker(mocker: MockFactory): TestingModuleBuilder
+```
+
+```typescript
+type MockFactory = (token?: InjectionToken) => any;
+```
+
+```typescript
+import { createMock } from '@golevelup/ts-jest';
+
+const moduleRef = await Test.createTestingModule({
+  controllers: [CatsController],
+})
+  .useMocker(token => {
+    if (token === CatsService) {
+      return createMock<CatsService>();
+    }
+  })
+  .compile();
+```
+
+---
+
+### `.setLogger()`
+
+Replaces the default `TestingLogger` with a custom logger service.
+
+```typescript
+setLogger(testingLogger: LoggerService): TestingModuleBuilder
+```
+
+---
+
+## `TestingModule`
+
+The compiled module instance returned by `.compile()`. Extends `NestApplicationContext`.
+
+### `.get()`
+
+Retrieves a provider, controller, or injectable from the module's DI container.
+
+```typescript
+get<T>(typeOrToken: Type<T> | InjectionToken, options?: { strict?: boolean }): T
+```
+
+```typescript
+const catsService = moduleRef.get(CatsService);
+```
+
+---
+
+### `.resolve()`
+
+Retrieves a request-scoped or transient provider. Creates a new DI sub-tree each time it is called.
+
+```typescript
+resolve<T>(
+  typeOrToken: Type<T> | InjectionToken,
+  contextId?: ContextId,
+): Promise<T>
+```
+
+```typescript
+const requestScopedService = await moduleRef.resolve(RequestScopedService);
+```
+
+---
+
+### `.createNestApplication()`
+
+Creates a full `INestApplication` from the testing module, suitable for end-to-end tests.
+
+```typescript
+createNestApplication<T extends INestApplication = INestApplication>(
+  options?: NestApplicationOptions,
+): T
+
+createNestApplication<T extends INestApplication = INestApplication>(
+  httpAdapter: HttpServer | AbstractHttpAdapter,
+  options?: NestApplicationOptions,
+): T
+```
+
+```typescript
+const app = moduleRef.createNestApplication();
+await app.init();
+```
+
+---
+
+## Full test example
+
+```typescript
+import { Test, TestingModule } from '@nestjs/testing';
+import { CatsController } from './cats.controller';
+import { CatsService } from './cats.service';
+
+describe('CatsController', () => {
+  let controller: CatsController;
+  let service: CatsService;
+
+  beforeEach(async () => {
+    const module: TestingModule = await Test.createTestingModule({
+      controllers: [CatsController],
+      providers: [CatsService],
+    })
+      .overrideProvider(CatsService)
+      .useValue({ findAll: jest.fn().mockResolvedValue([{ name: 'Cat' }]) })
+      .compile();
+
+    controller = module.get<CatsController>(CatsController);
+    service = module.get<CatsService>(CatsService);
+  });
+
+  it('should return an array of cats', async () => {
+    const result = await controller.findAll();
+    expect(result).toEqual([{ name: 'Cat' }]);
+  });
+});
+```

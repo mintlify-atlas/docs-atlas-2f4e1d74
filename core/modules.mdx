@@ -1,0 +1,198 @@
+---
+title: 'Modules'
+description: 'Organize your NestJS application into cohesive feature boundaries using the @Module() decorator.'
+keywords: ['nestjs', 'modules', 'feature modules', 'global modules', 'dynamic modules', 'dependency injection']
+---
+
+A module is a class annotated with the `@Module()` decorator. Nest uses module metadata to build the application graph — the internal structure Nest uses to resolve relationships and dependencies between providers and controllers.
+
+Every Nest application has at least one module: the **root module**. The root module is the starting point Nest uses to build the application graph. While small apps may live entirely in the root module, most applications will compose several feature modules, each encapsulating a closely related set of capabilities.
+
+## The `@Module()` decorator
+
+The `@Module()` decorator accepts a single metadata object with four properties:
+
+| Property      | Description |
+| ------------- | ----------- |
+| `imports`     | Other modules whose exported providers are needed in this module. |
+| `controllers` | Controllers defined in this module that Nest should instantiate. |
+| `providers`   | Providers that the Nest injector will instantiate and that may be shared within this module. |
+| `exports`     | The subset of `providers` that should be available to modules that import this module. You can also re-export imported modules. |
+
+```typescript app.module.ts
+import { Module } from '@nestjs/common';
+import { CatsModule } from './cats/cats.module';
+
+@Module({
+  imports: [CatsModule],
+})
+export class AppModule {}
+```
+
+## Feature modules
+
+A feature module groups the controllers and providers that belong to a specific feature of your application. This keeps your code organized and establishes clear boundaries.
+
+<Steps>
+  <Step title="Create the service">
+    ```typescript cats/cats.service.ts
+    import { Injectable } from '@nestjs/common';
+    import { Cat } from './interfaces/cat.interface';
+
+    @Injectable()
+    export class CatsService {
+      private readonly cats: Cat[] = [];
+
+      create(cat: Cat) {
+        this.cats.push(cat);
+      }
+
+      findAll(): Promise<Cat[]> {
+        return Promise.resolve(this.cats);
+      }
+    }
+    ```
+  </Step>
+  <Step title="Create the controller">
+    ```typescript cats/cats.controller.ts
+    import { Controller, Get, Post, Body } from '@nestjs/common';
+    import { CatsService } from './cats.service';
+    import { CreateCatDto } from './dto/create-cat.dto';
+
+    @Controller('cats')
+    export class CatsController {
+      constructor(private readonly catsService: CatsService) {}
+
+      @Post()
+      create(@Body() createCatDto: CreateCatDto) {
+        this.catsService.create(createCatDto);
+      }
+
+      @Get()
+      findAll() {
+        return this.catsService.findAll();
+      }
+    }
+    ```
+  </Step>
+  <Step title="Declare the feature module">
+    ```typescript cats/cats.module.ts
+    import { Module } from '@nestjs/common';
+    import { CatsController } from './cats.controller';
+    import { CatsService } from './cats.service';
+
+    @Module({
+      controllers: [CatsController],
+      providers: [CatsService],
+    })
+    export class CatsModule {}
+    ```
+  </Step>
+  <Step title="Import into the root module">
+    ```typescript app.module.ts
+    import { Module } from '@nestjs/common';
+    import { CatsModule } from './cats/cats.module';
+
+    @Module({
+      imports: [CatsModule],
+    })
+    export class AppModule {}
+    ```
+  </Step>
+</Steps>
+
+## Shared modules
+
+Modules are **singletons** by default. Once created, the same instance of a provider can be shared across multiple modules. To share a provider, add it to the module's `exports` array.
+
+```typescript cats/cats.module.ts
+import { Module } from '@nestjs/common';
+import { CatsController } from './cats.controller';
+import { CatsService } from './cats.service';
+
+@Module({
+  controllers: [CatsController],
+  providers: [CatsService],
+  exports: [CatsService],
+})
+export class CatsModule {}
+```
+
+Any module that imports `CatsModule` now has access to `CatsService` and will share the same instance.
+
+## Global modules
+
+If you find yourself importing the same module everywhere, you can mark it as global with the `@Global()` decorator. Nest will then register its exported providers in the global scope — you only need to import the module once (typically in the root module).
+
+```typescript database/database.module.ts
+import { Global, Module } from '@nestjs/common';
+import { DatabaseService } from './database.service';
+
+@Global()
+@Module({
+  providers: [DatabaseService],
+  exports: [DatabaseService],
+})
+export class DatabaseModule {}
+```
+
+<Warning>
+  Making everything global is not a good design decision. Use `@Global()` sparingly for providers that are genuinely needed across the entire application (e.g., a database connection or a configuration service).
+</Warning>
+
+## Dynamic modules
+
+Dynamic modules let you create customizable modules that can accept configuration options at import time. A dynamic module returns a `DynamicModule` object — which extends the standard `ModuleMetadata` — from a static method such as `forRoot()` or `register()`.
+
+```typescript config/config.module.ts
+import { DynamicModule, Module } from '@nestjs/common';
+import { ConfigService } from './config.service';
+
+@Module({})
+export class ConfigModule {
+  static forRoot(options: { folder: string }): DynamicModule {
+    return {
+      module: ConfigModule,
+      providers: [
+        {
+          provide: 'CONFIG_OPTIONS',
+          useValue: options,
+        },
+        ConfigService,
+      ],
+      exports: [ConfigService],
+    };
+  }
+}
+```
+
+You then import the module by calling the static method:
+
+```typescript app.module.ts
+import { Module } from '@nestjs/common';
+import { ConfigModule } from './config/config.module';
+
+@Module({
+  imports: [ConfigModule.forRoot({ folder: './config' })],
+})
+export class AppModule {}
+```
+
+<Tip>
+  The `DynamicModule` interface extends `ModuleMetadata`, so it supports all the same properties (`imports`, `controllers`, `providers`, `exports`) in addition to the required `module` reference.
+</Tip>
+
+## Module re-exporting
+
+A module can re-export modules that it imports, making them available to any module that imports it:
+
+```typescript core/core.module.ts
+import { Module } from '@nestjs/common';
+import { CommonModule } from '../common/common.module';
+
+@Module({
+  imports: [CommonModule],
+  exports: [CommonModule],
+})
+export class CoreModule {}
+```

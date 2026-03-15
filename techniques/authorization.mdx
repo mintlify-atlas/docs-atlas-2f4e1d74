@@ -1,0 +1,209 @@
+---
+title: 'Authorization'
+description: 'Control what authenticated users can do in NestJS using role-based and attribute-based access control.'
+keywords: ['nestjs', 'authorization', 'rbac', 'roles', 'guards', 'reflector', 'casl', 'abac']
+---
+
+Authorization determines *what* an authenticated user is allowed to do. While authentication answers "who is this user?", authorization answers "can this user perform this action?". NestJS implements authorization through Guards combined with metadata attached via decorators.
+
+## Role-based access control (RBAC)
+
+RBAC grants permissions based on the roles assigned to a user. The pattern involves three pieces:
+
+1. A `@Roles()` decorator that attaches role metadata to a route handler
+2. A `RolesGuard` that reads the metadata and compares it against the current user's roles
+3. The `Reflector` service from `@nestjs/core` that reads the metadata at runtime
+
+### Creating the `@Roles()` decorator
+
+The cleanest way to create a typed roles decorator is with `Reflector.createDecorator()`:
+
+```typescript common/decorators/roles.decorator.ts
+import { Reflector } from '@nestjs/core';
+
+export const Roles = Reflector.createDecorator<string[]>();
+```
+
+Alternatively, you can use the lower-level `SetMetadata` directly:
+
+```typescript common/decorators/roles.decorator.ts
+import { SetMetadata } from '@nestjs/common';
+
+export const ROLES_KEY = 'roles';
+export const Roles = (...roles: string[]) => SetMetadata(ROLES_KEY, roles);
+```
+
+<Tip>
+Prefer `Reflector.createDecorator()` — it is fully type-safe and the `Reflector.get()` call in your guard requires no separate metadata key constant.
+</Tip>
+
+### Implementing RolesGuard
+
+The guard uses `Reflector` to retrieve the roles defined on the route handler, then checks whether the current user has one of those roles:
+
+```typescript common/guards/roles.guard.ts
+import { CanActivate, ExecutionContext, Injectable } from '@nestjs/common';
+import { Reflector } from '@nestjs/core';
+import { Roles } from '../decorators/roles.decorator';
+
+@Injectable()
+export class RolesGuard implements CanActivate {
+  constructor(private readonly reflector: Reflector) {}
+
+  canActivate(context: ExecutionContext): boolean {
+    const roles = this.reflector.get(Roles, context.getHandler());
+    if (!roles) {
+      return true; // no roles required — allow access
+    }
+    const request = context.switchToHttp().getRequest();
+    const user = request.user;
+    return user && user.roles && user.roles.some(role => roles.includes(role));
+  }
+}
+```
+
+`context.getHandler()` retrieves the route handler function so that `Reflector.get()` can look up the metadata attached to it.
+
+### Applying the decorator
+
+```typescript cats/cats.controller.ts
+import { Controller, Get, Post, Body, UseGuards } from '@nestjs/common';
+import { Roles } from '../common/decorators/roles.decorator';
+import { RolesGuard } from '../common/guards/roles.guard';
+
+@UseGuards(RolesGuard)
+@Controller('cats')
+export class CatsController {
+  @Post()
+  @Roles(['admin'])
+  create(@Body() createCatDto: any) {
+    // only users with role 'admin' reach this handler
+  }
+
+  @Get()
+  findAll() {
+    // no @Roles() — any authenticated user can access this
+  }
+}
+```
+
+### Registering the guard globally
+
+Register `RolesGuard` as an application-wide guard by providing it with the `APP_GUARD` token:
+
+```typescript app.module.ts
+import { Module } from '@nestjs/common';
+import { APP_GUARD } from '@nestjs/core';
+import { RolesGuard } from './common/guards/roles.guard';
+
+@Module({
+  providers: [
+    {
+      provide: APP_GUARD,
+      useClass: RolesGuard,
+    },
+  ],
+})
+export class AppModule {}
+```
+
+## Merging metadata from controller and handler
+
+When you need roles to be inherited from both a controller-level decorator *and* a handler-level decorator, use `getAllAndOverride()` or `getAllAndMerge()`:
+
+```typescript common/guards/roles.guard.ts
+import { CanActivate, ExecutionContext, Injectable } from '@nestjs/common';
+import { Reflector } from '@nestjs/core';
+import { Roles } from '../decorators/roles.decorator';
+
+@Injectable()
+export class RolesGuard implements CanActivate {
+  constructor(private readonly reflector: Reflector) {}
+
+  canActivate(context: ExecutionContext): boolean {
+    // returns first non-undefined value from handler, then controller
+    const roles = this.reflector.getAllAndOverride(Roles, [
+      context.getHandler(),
+      context.getClass(),
+    ]);
+    if (!roles) {
+      return true;
+    }
+    const { user } = context.switchToHttp().getRequest();
+    return user?.roles?.some(role => roles.includes(role)) ?? false;
+  }
+}
+```
+
+## Claims-based authorization
+
+For more granular control, attach claim objects (permissions, scopes, etc.) to the user at authentication time and check them in a guard:
+
+```typescript auth/jwt.strategy.ts
+import { Injectable } from '@nestjs/common';
+import { PassportStrategy } from '@nestjs/passport';
+import { ExtractJwt, Strategy } from 'passport-jwt';
+
+@Injectable()
+export class JwtStrategy extends PassportStrategy(Strategy) {
+  constructor() {
+    super({
+      jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
+      secretOrKey: process.env.JWT_SECRET,
+    });
+  }
+
+  async validate(payload: any) {
+    // payload may include claims like { sub, username, permissions: ['read:cats'] }
+    return { userId: payload.sub, username: payload.username, permissions: payload.permissions };
+  }
+}
+```
+
+```typescript common/guards/permissions.guard.ts
+import { CanActivate, ExecutionContext, Injectable } from '@nestjs/common';
+import { Reflector } from '@nestjs/core';
+
+export const RequirePermissions = Reflector.createDecorator<string[]>();
+
+@Injectable()
+export class PermissionsGuard implements CanActivate {
+  constructor(private reflector: Reflector) {}
+
+  canActivate(context: ExecutionContext): boolean {
+    const required = this.reflector.getAllAndOverride(RequirePermissions, [
+      context.getHandler(),
+      context.getClass(),
+    ]);
+    if (!required) return true;
+    const { user } = context.switchToHttp().getRequest();
+    return required.every(p => user?.permissions?.includes(p));
+  }
+}
+```
+
+## Attribute-based access control (ABAC)
+
+When authorization logic depends on relationships between a user and a specific resource (e.g., "a user can only edit their own posts"), role-based guards quickly become insufficient. Attribute-based access control evaluates policies against subjects, actions, and resource attributes.
+
+The `@nestjs/casl` community package integrates [CASL](https://casl.js.org/) with the NestJS dependency injection system for ABAC:
+
+```bash
+npm install @casl/ability @casl/prisma
+```
+
+With CASL you define an `Ability` for each user and check it in a guard or directly in service methods:
+
+```typescript
+const ability = defineAbility((can, cannot) => {
+  can('read', 'Article');
+  can('update', 'Article', { authorId: user.id }); // only own articles
+  cannot('delete', 'Article');
+});
+
+ability.can('update', article); // true only if article.authorId === user.id
+```
+
+<Note>
+For complex multi-tenant or content-ownership scenarios, ABAC is more expressive than RBAC. For simple applications, RBAC with guards is often sufficient and easier to reason about.
+</Note>

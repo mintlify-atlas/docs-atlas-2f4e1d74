@@ -1,0 +1,263 @@
+---
+title: 'Mutations'
+description: 'Handle create, update, and delete operations in NestJS GraphQL with @Mutation and @InputType.'
+keywords: ['graphql', 'mutation', 'InputType', 'create', 'update', 'delete', 'nestjs']
+---
+
+Mutations modify server-side data. In NestJS you define them with the `@Mutation()` decorator inside a resolver class. Input data is described using `@InputType()` classes, which become named input types in the generated schema.
+
+## Defining an input type
+
+An input type is a TypeScript class decorated with `@InputType()`. Each property is decorated with `@Field()` — the same way you annotate `@ObjectType()` fields.
+
+```typescript dto/new-recipe.input.ts
+import { Field, InputType } from '@nestjs/graphql';
+import { MaxLength, Length } from 'class-validator';
+
+@InputType()
+export class NewRecipeInput {
+  @Field()
+  @MaxLength(30)
+  title: string;
+
+  @Field({ nullable: true })
+  @Length(30, 255)
+  description?: string;
+
+  @Field(() => [String])
+  ingredients: string[];
+}
+```
+
+<Note>
+You can combine `class-validator` decorators with `@Field()` to validate input at the controller layer. Install `class-validator` and `class-transformer`, then apply `ValidationPipe` globally or to the specific resolver.
+</Note>
+
+## Writing mutation handlers
+
+Add `@Mutation()` to a method in your resolver. Pass the return type as the first argument (the same way you do with `@Query()`).
+
+```typescript recipes.resolver.ts
+import { Args, Mutation, Resolver } from '@nestjs/graphql';
+import { NewRecipeInput } from './dto/new-recipe.input';
+import { UpdateRecipeInput } from './dto/update-recipe.input';
+import { Recipe } from './models/recipe.model';
+import { RecipesService } from './recipes.service';
+
+@Resolver(() => Recipe)
+export class RecipesResolver {
+  constructor(private readonly recipesService: RecipesService) {}
+
+  @Mutation(() => Recipe)
+  async createRecipe(
+    @Args('input') input: NewRecipeInput,
+  ): Promise<Recipe> {
+    return this.recipesService.create(input);
+  }
+
+  @Mutation(() => Recipe)
+  async updateRecipe(
+    @Args('id') id: string,
+    @Args('input') input: UpdateRecipeInput,
+  ): Promise<Recipe> {
+    return this.recipesService.update(id, input);
+  }
+
+  @Mutation(() => Boolean)
+  async deleteRecipe(@Args('id') id: string): Promise<boolean> {
+    return this.recipesService.remove(id);
+  }
+}
+```
+
+This generates the following SDL:
+
+```graphql
+type Mutation {
+  createRecipe(input: NewRecipeInput!): Recipe!
+  updateRecipe(id: String!, input: UpdateRecipeInput!): Recipe!
+  deleteRecipe(id: String!): Boolean!
+}
+```
+
+## Create pattern
+
+The create pattern accepts a `NewRecipeInput` and returns the created entity.
+
+```typescript dto/new-recipe.input.ts
+import { Field, InputType } from '@nestjs/graphql';
+
+@InputType()
+export class NewRecipeInput {
+  @Field()
+  title: string;
+
+  @Field({ nullable: true })
+  description?: string;
+
+  @Field(() => [String])
+  ingredients: string[];
+}
+```
+
+```graphql
+mutation {
+  createRecipe(input: { title: "Pasta", ingredients: ["pasta", "sauce"] }) {
+    id
+    title
+    creationDate
+  }
+}
+```
+
+## Update pattern
+
+For partial updates, mark all fields nullable using `@Field({ nullable: true })`:
+
+```typescript dto/update-recipe.input.ts
+import { Field, InputType } from '@nestjs/graphql';
+
+@InputType()
+export class UpdateRecipeInput {
+  @Field({ nullable: true })
+  title?: string;
+
+  @Field({ nullable: true })
+  description?: string;
+
+  @Field(() => [String], { nullable: true })
+  ingredients?: string[];
+}
+```
+
+```graphql
+mutation {
+  updateRecipe(id: "1", input: { title: "Updated Pasta" }) {
+    id
+    title
+  }
+}
+```
+
+<Tip>
+Use `PartialType` from `@nestjs/graphql` to automatically generate an update input from a create input with all fields made nullable:
+
+```typescript
+import { InputType, PartialType } from '@nestjs/graphql';
+import { NewRecipeInput } from './new-recipe.input';
+
+@InputType()
+export class UpdateRecipeInput extends PartialType(NewRecipeInput) {}
+```
+</Tip>
+
+## Delete pattern
+
+Delete mutations typically accept an `id` argument and return a `Boolean` to indicate success.
+
+```typescript
+@Mutation(() => Boolean)
+async deleteRecipe(@Args('id') id: string): Promise<boolean> {
+  return this.recipesService.remove(id);
+}
+```
+
+```graphql
+mutation {
+  deleteRecipe(id: "1")
+}
+```
+
+## Returning modified data
+
+Always return the updated entity from mutations so that clients can update their local cache without a follow-up query.
+
+```typescript
+@Mutation(() => Recipe)
+async updateRecipe(
+  @Args('id') id: string,
+  @Args('input') input: UpdateRecipeInput,
+): Promise<Recipe> {
+  const updated = await this.recipesService.update(id, input);
+  return updated; // Return the full updated record
+}
+```
+
+## Full example
+
+<CodeGroup>
+
+```typescript dto/new-recipe.input.ts
+import { Field, InputType } from '@nestjs/graphql';
+import { MaxLength } from 'class-validator';
+
+@InputType()
+export class NewRecipeInput {
+  @Field()
+  @MaxLength(30)
+  title: string;
+
+  @Field({ nullable: true })
+  description?: string;
+
+  @Field(() => [String])
+  ingredients: string[];
+}
+```
+
+```typescript dto/update-recipe.input.ts
+import { InputType, PartialType } from '@nestjs/graphql';
+import { NewRecipeInput } from './new-recipe.input';
+
+@InputType()
+export class UpdateRecipeInput extends PartialType(NewRecipeInput) {}
+```
+
+```typescript recipes.resolver.ts
+import { Args, Mutation, Query, Resolver } from '@nestjs/graphql';
+import { NewRecipeInput } from './dto/new-recipe.input';
+import { UpdateRecipeInput } from './dto/update-recipe.input';
+import { Recipe } from './models/recipe.model';
+import { RecipesService } from './recipes.service';
+
+@Resolver(() => Recipe)
+export class RecipesResolver {
+  constructor(private readonly recipesService: RecipesService) {}
+
+  @Query(() => [Recipe])
+  recipes(): Promise<Recipe[]> {
+    return this.recipesService.findAll();
+  }
+
+  @Mutation(() => Recipe)
+  async createRecipe(
+    @Args('input') input: NewRecipeInput,
+  ): Promise<Recipe> {
+    return this.recipesService.create(input);
+  }
+
+  @Mutation(() => Recipe)
+  async updateRecipe(
+    @Args('id') id: string,
+    @Args('input') input: UpdateRecipeInput,
+  ): Promise<Recipe> {
+    return this.recipesService.update(id, input);
+  }
+
+  @Mutation(() => Boolean)
+  async deleteRecipe(@Args('id') id: string): Promise<boolean> {
+    return this.recipesService.remove(id);
+  }
+}
+```
+
+</CodeGroup>
+
+<Columns cols={2}>
+  <Card title="Resolvers" icon="code" href="/graphql/resolvers">
+    Define @ObjectType types and @Query handlers.
+  </Card>
+  <Card title="Subscriptions" icon="radio" href="/graphql/subscriptions">
+    Push real-time events to clients after mutations.
+  </Card>
+</Columns>

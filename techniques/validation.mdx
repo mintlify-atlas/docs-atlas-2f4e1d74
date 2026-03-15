@@ -1,0 +1,250 @@
+---
+title: 'Validation'
+description: 'Validate incoming request data in NestJS using ValidationPipe, class-validator, and class-transformer.'
+keywords: ['nestjs', 'validation', 'ValidationPipe', 'class-validator', 'class-transformer', 'dto', 'pipes']
+---
+
+`ValidationPipe` is the most powerful built-in pipe in NestJS. It automatically validates incoming request bodies, query parameters, and route parameters against a DTO (Data Transfer Object) class, and optionally transforms the incoming plain object into an instance of that class.
+
+## Installation
+
+`ValidationPipe` depends on two peer libraries:
+
+<CodeGroup>
+
+```bash npm
+npm install class-validator class-transformer
+```
+
+```bash yarn
+yarn add class-validator class-transformer
+```
+
+```bash pnpm
+pnpm add class-validator class-transformer
+```
+
+</CodeGroup>
+
+## Creating a DTO
+
+A DTO is a plain TypeScript class with `class-validator` decorators that declare the expected shape and constraints of the data:
+
+```typescript users/dto/create-user.dto.ts
+import {
+  IsString,
+  IsEmail,
+  IsInt,
+  Min,
+  Max,
+  IsOptional,
+  IsArray,
+  MinLength,
+} from 'class-validator';
+
+export class CreateUserDto {
+  @IsString()
+  @MinLength(2)
+  name: string;
+
+  @IsEmail()
+  email: string;
+
+  @IsInt()
+  @Min(0)
+  @Max(120)
+  age: number;
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  roles?: string[];
+}
+```
+
+When `ValidationPipe` processes an incoming request, it instantiates the DTO class and runs all the constraint decorators. If any constraint fails, Nest throws a `400 Bad Request` with the validation error messages.
+
+## Enabling ValidationPipe globally
+
+The recommended approach is to enable `ValidationPipe` globally in `main.ts` so that every route is protected automatically:
+
+```typescript main.ts
+import { NestFactory } from '@nestjs/core';
+import { ValidationPipe } from '@nestjs/common';
+import { AppModule } from './app.module';
+
+async function bootstrap() {
+  const app = await NestFactory.create(AppModule);
+  app.useGlobalPipes(
+    new ValidationPipe({
+      whitelist: true,
+      forbidNonWhitelisted: true,
+      transform: true,
+    }),
+  );
+  await app.listen(3000);
+}
+bootstrap();
+```
+
+## Per-route pipe
+
+Apply the pipe to a specific route using the `@UsePipes()` decorator or inline in the parameter decorator:
+
+```typescript users/users.controller.ts
+import { Body, Controller, Post, UsePipes, ValidationPipe } from '@nestjs/common';
+import { CreateUserDto } from './dto/create-user.dto';
+
+@Controller('users')
+export class UsersController {
+  @Post()
+  @UsePipes(new ValidationPipe({ whitelist: true }))
+  create(@Body() createUserDto: CreateUserDto) {
+    return createUserDto;
+  }
+}
+```
+
+## ValidationPipe options
+
+<Accordion title="All ValidationPipe options">
+
+| Option | Type | Description |
+| ------ | ---- | ----------- |
+| `whitelist` | `boolean` | Strip properties not present in the DTO class. |
+| `forbidNonWhitelisted` | `boolean` | Throw a `400` if non-whitelisted properties are present instead of silently stripping them. |
+| `transform` | `boolean` | Automatically transform plain objects to DTO class instances and coerce primitive types. |
+| `transformOptions` | `ClassTransformOptions` | Options passed to `class-transformer`'s `plainToInstance`. |
+| `disableErrorMessages` | `boolean` | Suppress detailed validation messages in the response (useful in production). |
+| `errorHttpStatusCode` | `ErrorHttpStatusCode` | Override the HTTP status code thrown on validation failure (default: `400`). |
+| `exceptionFactory` | `(errors) => any` | Custom factory for the thrown exception. |
+| `validateCustomDecorators` | `boolean` | Enable validation for parameters decorated with custom parameter decorators. |
+| `expectedType` | `Type<any>` | Force the pipe to validate against a specific type regardless of the declared parameter type. |
+
+</Accordion>
+
+### The `whitelist` option
+
+With `whitelist: true`, any property not decorated in the DTO is stripped before it reaches your handler:
+
+```typescript
+// POST /users with body: { name: 'Alice', email: 'a@b.com', age: 25, hacked: true }
+// After whitelist: { name: 'Alice', email: 'a@b.com', age: 25 }
+```
+
+### The `transform` option
+
+With `transform: true`, the pipe converts the incoming plain JSON object into an actual instance of the DTO class. This is useful when you have methods on the DTO or use class-transformer features like `@Exclude()` and `@Expose()`:
+
+```typescript
+console.log(createUserDto instanceof CreateUserDto); // true, when transform: true
+```
+
+With `transform: true`, primitive route and query params are also coerced to their declared types:
+
+```typescript users/users.controller.ts
+@Get(':id')
+findOne(@Param('id') id: number) {
+  // id is a number, not a string, when transform is enabled
+  console.log(typeof id); // 'number'
+}
+```
+
+## Mapped types
+
+The `@nestjs/mapped-types` package provides utilities to derive new DTO classes from existing ones, avoiding repetition:
+
+```bash
+npm install @nestjs/mapped-types
+```
+
+```typescript users/dto/update-user.dto.ts
+import { PartialType } from '@nestjs/mapped-types';
+import { CreateUserDto } from './create-user.dto';
+
+// All fields become optional
+export class UpdateUserDto extends PartialType(CreateUserDto) {}
+```
+
+```typescript users/dto/login.dto.ts
+import { PickType } from '@nestjs/mapped-types';
+import { CreateUserDto } from './create-user.dto';
+
+// Only selected fields are included
+export class LoginDto extends PickType(CreateUserDto, ['email'] as const) {
+  password: string;
+}
+```
+
+```typescript users/dto/public-user.dto.ts
+import { OmitType } from '@nestjs/mapped-types';
+import { CreateUserDto } from './create-user.dto';
+
+// All fields except excluded ones
+export class PublicUserDto extends OmitType(CreateUserDto, ['age'] as const) {}
+```
+
+```typescript users/dto/combined.dto.ts
+import { IntersectionType } from '@nestjs/mapped-types';
+import { CreateUserDto } from './create-user.dto';
+import { AddressDto } from './address.dto';
+
+// Union of both DTOs
+export class CreateUserWithAddressDto extends IntersectionType(
+  CreateUserDto,
+  AddressDto,
+) {}
+```
+
+<Note>
+If you use Swagger, import the mapped-type helpers from `@nestjs/swagger` instead of `@nestjs/mapped-types`. The Swagger versions extend the originals and preserve the OpenAPI metadata.
+</Note>
+
+## Custom validation decorators
+
+Create reusable validation decorators that encapsulate complex rules:
+
+```typescript common/validators/is-strong-password.decorator.ts
+import {
+  registerDecorator,
+  ValidationOptions,
+  ValidationArguments,
+} from 'class-validator';
+
+export function IsStrongPassword(validationOptions?: ValidationOptions) {
+  return function (object: object, propertyName: string) {
+    registerDecorator({
+      name: 'isStrongPassword',
+      target: object.constructor,
+      propertyName,
+      options: validationOptions,
+      validator: {
+        validate(value: any, _args: ValidationArguments) {
+          return (
+            typeof value === 'string' &&
+            value.length >= 8 &&
+            /[A-Z]/.test(value) &&
+            /[0-9]/.test(value)
+          );
+        },
+        defaultMessage() {
+          return 'Password must be at least 8 characters with an uppercase letter and a number';
+        },
+      },
+    });
+  };
+}
+```
+
+```typescript users/dto/create-user.dto.ts
+import { IsEmail } from 'class-validator';
+import { IsStrongPassword } from '../../common/validators/is-strong-password.decorator';
+
+export class CreateUserDto {
+  @IsEmail()
+  email: string;
+
+  @IsStrongPassword()
+  password: string;
+}
+```

@@ -1,0 +1,273 @@
+---
+title: 'Configuration'
+description: 'Manage environment variables and application configuration in NestJS with @nestjs/config.'
+keywords: ['nestjs', 'configuration', 'environment variables', 'config', '.env', 'ConfigService', 'validation', 'joi']
+---
+
+Applications need different settings for different environments — database URLs, API keys, feature flags. The `@nestjs/config` package provides a type-safe, centralized way to manage configuration backed by environment variables and `.env` files.
+
+## Installation
+
+<CodeGroup>
+
+```bash npm
+npm install @nestjs/config
+```
+
+```bash yarn
+yarn add @nestjs/config
+```
+
+</CodeGroup>
+
+`@nestjs/config` uses [dotenv](https://github.com/motdotla/dotenv) internally. You do not need to install `dotenv` separately.
+
+## Basic setup
+
+Import `ConfigModule.forRoot()` in your root `AppModule`:
+
+```typescript app.module.ts
+import { Module } from '@nestjs/common';
+import { ConfigModule } from '@nestjs/config';
+
+@Module({
+  imports: [
+    ConfigModule.forRoot(),
+  ],
+})
+export class AppModule {}
+```
+
+By default this loads a `.env` file from the project root and makes all variables available via `process.env` and `ConfigService`.
+
+```bash .env
+DATABASE_HOST=localhost
+DATABASE_PORT=5432
+JWT_SECRET=supersecret
+```
+
+## ConfigService
+
+Inject `ConfigService` anywhere in your application to read values in a type-safe way:
+
+```typescript app.service.ts
+import { Injectable } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+
+@Injectable()
+export class AppService {
+  constructor(private config: ConfigService) {}
+
+  getDatabaseHost(): string {
+    return this.config.get<string>('DATABASE_HOST');
+  }
+
+  getDatabasePort(): number {
+    return this.config.get<number>('DATABASE_PORT');
+  }
+}
+```
+
+`ConfigService.get()` accepts a generic type parameter to hint the return type. For required values, use `getOrThrow()` which throws if the variable is not set:
+
+```typescript
+const secret = this.config.getOrThrow<string>('JWT_SECRET');
+```
+
+## Making ConfigModule global
+
+Pass `isGlobal: true` so that you do not need to import `ConfigModule` in every feature module:
+
+```typescript app.module.ts
+import { Module } from '@nestjs/common';
+import { ConfigModule } from '@nestjs/config';
+
+@Module({
+  imports: [
+    ConfigModule.forRoot({
+      isGlobal: true,
+    }),
+  ],
+})
+export class AppModule {}
+```
+
+## Custom configuration files
+
+For complex applications, split configuration into separate files grouped by concern. Each config file exports a factory function:
+
+```typescript config/database.config.ts
+import { registerAs } from '@nestjs/config';
+
+export default registerAs('database', () => ({
+  host: process.env.DATABASE_HOST || 'localhost',
+  port: parseInt(process.env.DATABASE_PORT, 10) || 5432,
+  name: process.env.DATABASE_NAME || 'myapp',
+  username: process.env.DATABASE_USER,
+  password: process.env.DATABASE_PASSWORD,
+}));
+```
+
+```typescript config/jwt.config.ts
+import { registerAs } from '@nestjs/config';
+
+export default registerAs('jwt', () => ({
+  secret: process.env.JWT_SECRET,
+  expiresIn: process.env.JWT_EXPIRES_IN || '1h',
+}));
+```
+
+Register them with `load`:
+
+```typescript app.module.ts
+import { Module } from '@nestjs/common';
+import { ConfigModule } from '@nestjs/config';
+import databaseConfig from './config/database.config';
+import jwtConfig from './config/jwt.config';
+
+@Module({
+  imports: [
+    ConfigModule.forRoot({
+      isGlobal: true,
+      load: [databaseConfig, jwtConfig],
+    }),
+  ],
+})
+export class AppModule {}
+```
+
+Then access namespaced values with dot notation:
+
+```typescript
+const dbHost = this.config.get<string>('database.host');
+const jwtSecret = this.config.get<string>('jwt.secret');
+```
+
+## Validating environment variables
+
+Validating your environment variables at startup catches misconfigurations before they cause runtime errors.
+
+<Tabs>
+  <Tab title="Joi">
+    Install Joi:
+
+    ```bash
+    npm install joi
+    ```
+
+    Pass a validation schema to `ConfigModule.forRoot()`:
+
+    ```typescript app.module.ts
+    import { Module } from '@nestjs/common';
+    import { ConfigModule } from '@nestjs/config';
+    import * as Joi from 'joi';
+
+    @Module({
+      imports: [
+        ConfigModule.forRoot({
+          isGlobal: true,
+          validationSchema: Joi.object({
+            NODE_ENV: Joi.string()
+              .valid('development', 'production', 'test')
+              .default('development'),
+            DATABASE_HOST: Joi.string().required(),
+            DATABASE_PORT: Joi.number().default(5432),
+            JWT_SECRET: Joi.string().required(),
+          }),
+        }),
+      ],
+    })
+    export class AppModule {}
+    ```
+
+    If any required variable is missing or invalid, the application fails to start with a clear error message.
+  </Tab>
+  <Tab title="class-validator">
+    Create a validated configuration class and use `validate` option with a custom function:
+
+    ```typescript config/env.validation.ts
+    import { plainToInstance } from 'class-transformer';
+    import { IsEnum, IsNumber, IsString, validateSync } from 'class-validator';
+
+    enum Environment {
+      Development = 'development',
+      Production = 'production',
+      Test = 'test',
+    }
+
+    class EnvironmentVariables {
+      @IsEnum(Environment)
+      NODE_ENV: Environment;
+
+      @IsString()
+      DATABASE_HOST: string;
+
+      @IsNumber()
+      DATABASE_PORT: number;
+
+      @IsString()
+      JWT_SECRET: string;
+    }
+
+    export function validate(config: Record<string, unknown>) {
+      const validated = plainToInstance(EnvironmentVariables, config, {
+        enableImplicitConversion: true,
+      });
+      const errors = validateSync(validated, {
+        skipMissingProperties: false,
+      });
+      if (errors.length > 0) {
+        throw new Error(errors.toString());
+      }
+      return validated;
+    }
+    ```
+
+    ```typescript app.module.ts
+    import { Module } from '@nestjs/common';
+    import { ConfigModule } from '@nestjs/config';
+    import { validate } from './config/env.validation';
+
+    @Module({
+      imports: [
+        ConfigModule.forRoot({
+          isGlobal: true,
+          validate,
+        }),
+      ],
+    })
+    export class AppModule {}
+    ```
+  </Tab>
+</Tabs>
+
+## Expanding variables
+
+To reference other variables in your `.env` file, enable variable expansion:
+
+```bash
+npm install dotenv-expand
+```
+
+```typescript app.module.ts
+import { Module } from '@nestjs/common';
+import { ConfigModule } from '@nestjs/config';
+
+@Module({
+  imports: [
+    ConfigModule.forRoot({
+      expandVariables: true,
+    }),
+  ],
+})
+export class AppModule {}
+```
+
+```bash .env
+APP_NAME=myapp
+DATABASE_URL=postgres://localhost:5432/${APP_NAME}
+```
+
+<Tip>
+Use `process.env` only in the bootstrap phase (e.g., `main.ts`) or in config factory functions. Everywhere else in your application, inject `ConfigService` so your code remains testable.
+</Tip>

@@ -1,0 +1,203 @@
+---
+title: 'Exception filters'
+description: 'Handle exceptions thrown in your NestJS application using the built-in HttpException class and custom exception filters.'
+keywords: ['nestjs', 'exception filters', 'HttpException', 'error handling', 'catch', 'UseFilters']
+---
+
+Nest comes with a built-in **exceptions layer** that handles all unhandled exceptions across your application. When an exception is not handled by your application code, it is caught by this layer, which automatically sends an appropriate user-friendly response.
+
+## The `HttpException` class
+
+Nest provides `HttpException` as the base class for HTTP exceptions. Throw it from any route handler to return an error response:
+
+```typescript
+import { HttpException, HttpStatus } from '@nestjs/common';
+
+@Get()
+findAll() {
+  throw new HttpException('Forbidden', HttpStatus.FORBIDDEN);
+}
+```
+
+The response body contains two fields by default:
+
+```json
+{
+  "statusCode": 403,
+  "message": "Forbidden"
+}
+```
+
+To override the response body, pass an object as the first argument:
+
+```typescript
+throw new HttpException(
+  { statusCode: 403, message: 'Custom error', error: 'Forbidden' },
+  HttpStatus.FORBIDDEN,
+);
+```
+
+## Built-in HTTP exceptions
+
+Nest ships with a set of standard exceptions that extend `HttpException`, so you rarely need to construct one manually:
+
+<CodeGroup>
+
+```typescript Common exceptions
+import {
+  BadRequestException,
+  UnauthorizedException,
+  ForbiddenException,
+  NotFoundException,
+  ConflictException,
+  UnprocessableEntityException,
+  InternalServerErrorException,
+} from '@nestjs/common';
+
+throw new NotFoundException('Cat #1 not found');
+throw new BadRequestException('Validation failed');
+throw new UnauthorizedException();
+```
+
+```typescript With details
+throw new BadRequestException('Validation failed', {
+  cause: new Error(),
+  description: 'Some error description',
+});
+```
+
+</CodeGroup>
+
+## Custom exceptions
+
+Extend `HttpException` to create domain-specific exception classes:
+
+```typescript common/exceptions/forbidden.exception.ts
+import { HttpException, HttpStatus } from '@nestjs/common';
+
+export class ForbiddenException extends HttpException {
+  constructor() {
+    super('Forbidden', HttpStatus.FORBIDDEN);
+  }
+}
+```
+
+## Exception filters
+
+For full control over the error response — including logging, formatting, or sending to an external service — create an exception filter. A filter implements the `ExceptionFilter` interface and is marked with the `@Catch()` decorator.
+
+```typescript common/filters/http-exception.filter.ts
+import {
+  ArgumentsHost,
+  Catch,
+  ExceptionFilter,
+  HttpException,
+} from '@nestjs/common';
+import { Request, Response } from 'express';
+
+@Catch(HttpException)
+export class HttpExceptionFilter implements ExceptionFilter<HttpException> {
+  catch(exception: HttpException, host: ArgumentsHost) {
+    const ctx = host.switchToHttp();
+    const response = ctx.getResponse<Response>();
+    const request = ctx.getRequest<Request>();
+    const statusCode = exception.getStatus();
+
+    response.status(statusCode).json({
+      statusCode,
+      timestamp: new Date().toISOString(),
+      path: request.url,
+    });
+  }
+}
+```
+
+`@Catch(HttpException)` tells Nest which exception type to bind this filter to. You can pass multiple types: `@Catch(HttpException, RpcException)`.
+
+### `ArgumentsHost` and `HttpArgumentsHost`
+
+`ArgumentsHost` provides a platform-agnostic wrapper around the arguments passed to a handler. Call `.switchToHttp()` to get an `HttpArgumentsHost` with typed `getRequest()` and `getResponse()` accessors. For WebSocket and microservice contexts, use `.switchToWs()` and `.switchToRpc()` respectively.
+
+```typescript
+const ctx = host.switchToHttp();
+const request = ctx.getRequest<Request>();
+const response = ctx.getResponse<Response>();
+const next = ctx.getNext();
+```
+
+## Binding filters
+
+Apply exception filters at the method, controller, or global level.
+
+<Tabs>
+  <Tab title="Method scope">
+    ```typescript
+    import { UseFilters } from '@nestjs/common';
+
+    @Post()
+    @UseFilters(HttpExceptionFilter)
+    create(@Body() createCatDto: CreateCatDto) {
+      throw new ForbiddenException();
+    }
+    ```
+  </Tab>
+  <Tab title="Controller scope">
+    ```typescript
+    @UseFilters(HttpExceptionFilter)
+    @Controller('cats')
+    export class CatsController {}
+    ```
+  </Tab>
+  <Tab title="Global scope">
+    ```typescript main.ts
+    async function bootstrap() {
+      const app = await NestFactory.create(AppModule);
+      app.useGlobalFilters(new HttpExceptionFilter());
+      await app.listen(3000);
+    }
+    ```
+  </Tab>
+</Tabs>
+
+<Tip>
+  Prefer passing the class (`@UseFilters(HttpExceptionFilter)`) over an instance (`@UseFilters(new HttpExceptionFilter())`). This lets Nest reuse the same instance across the module and reduces memory usage.
+</Tip>
+
+To register a global filter with dependency injection support, use the `APP_FILTER` token inside a module:
+
+```typescript app.module.ts
+import { Module } from '@nestjs/common';
+import { APP_FILTER } from '@nestjs/core';
+import { HttpExceptionFilter } from './common/filters/http-exception.filter';
+
+@Module({
+  providers: [
+    {
+      provide: APP_FILTER,
+      useClass: HttpExceptionFilter,
+    },
+  ],
+})
+export class AppModule {}
+```
+
+## Catch-all filter
+
+Omit the argument to `@Catch()` to catch every unhandled exception regardless of type:
+
+```typescript
+import { ArgumentsHost, Catch, ExceptionFilter } from '@nestjs/common';
+
+@Catch()
+export class AllExceptionsFilter implements ExceptionFilter {
+  catch(exception: unknown, host: ArgumentsHost) {
+    const ctx = host.switchToHttp();
+    const response = ctx.getResponse();
+
+    response.status(500).json({
+      statusCode: 500,
+      message: 'Internal server error',
+    });
+  }
+}
+```

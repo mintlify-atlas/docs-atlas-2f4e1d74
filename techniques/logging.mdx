@@ -1,0 +1,251 @@
+---
+title: 'Logging'
+description: 'Use the built-in Logger class in NestJS and learn how to customize or replace it with a third-party logger.'
+keywords: ['nestjs', 'logging', 'Logger', 'ConsoleLogger', 'log levels', 'winston', 'pino']
+---
+
+NestJS ships with a built-in `Logger` class from `@nestjs/common` that you can use throughout your application. It supports multiple log levels, context labels, optional timestamps, and JSON output. For production applications, you can replace it with a third-party logger like Winston or Pino.
+
+## Using the built-in Logger
+
+Instantiate `Logger` with a context string (typically the class name) and call its level methods:
+
+```typescript cats/cats.service.ts
+import { Injectable, Logger } from '@nestjs/common';
+
+@Injectable()
+export class CatsService {
+  private readonly logger = new Logger(CatsService.name);
+
+  findAll() {
+    this.logger.log('Fetching all cats');
+    this.logger.debug('Debug details');
+    this.logger.verbose('Verbose trace');
+    return [];
+  }
+
+  remove(id: number) {
+    this.logger.warn(`Removing cat ${id}`);
+  }
+
+  handleError(err: Error) {
+    this.logger.error('Failed to process request', err.stack);
+  }
+}
+```
+
+The context string (`CatsService.name`) appears in brackets next to each log message:
+
+```
+[Nest] 12345 - 01/15/2026, 10:00:00 AM     LOG [CatsService] Fetching all cats
+```
+
+## Log levels
+
+The `Logger` class supports six levels, ordered from least to most severe:
+
+| Level | Method | Stream |
+| ----- | ------ | ------ |
+| `verbose` | `logger.verbose()` | stdout |
+| `debug` | `logger.debug()` | stdout |
+| `log` | `logger.log()` | stdout |
+| `warn` | `logger.warn()` | stdout |
+| `error` | `logger.error()` | stderr |
+| `fatal` | `logger.fatal()` | stdout |
+
+## Disabling or filtering logs
+
+Pass an array of enabled log levels to the Nest application factory to restrict output:
+
+```typescript main.ts
+import { NestFactory } from '@nestjs/core';
+import { AppModule } from './app.module';
+
+async function bootstrap() {
+  const app = await NestFactory.create(AppModule, {
+    logger: ['error', 'warn', 'log'], // suppress debug and verbose
+  });
+  await app.listen(3000);
+}
+bootstrap();
+```
+
+To disable all logs:
+
+```typescript main.ts
+const app = await NestFactory.create(AppModule, {
+  logger: false,
+});
+```
+
+## Static Logger methods
+
+`Logger` exposes static methods so you can log outside of the NestJS DI context:
+
+```typescript main.ts
+import { Logger } from '@nestjs/common';
+
+Logger.log('Application starting', 'Bootstrap');
+Logger.warn('Deprecated API in use', 'UsersController');
+Logger.error('Unhandled exception', error.stack, 'GlobalFilter');
+```
+
+## Extending ConsoleLogger
+
+To customise the default output format, extend `ConsoleLogger` rather than `Logger`:
+
+```typescript common/logger/app-logger.ts
+import { ConsoleLogger, ConsoleLoggerOptions } from '@nestjs/common';
+
+export class AppLogger extends ConsoleLogger {
+  constructor(context: string, options?: ConsoleLoggerOptions) {
+    super(context, options);
+  }
+
+  log(message: any, context?: string) {
+    // add custom fields, redact sensitive data, etc.
+    super.log(`[APP] ${message}`, context);
+  }
+
+  error(message: any, stack?: string, context?: string) {
+    // forward to an error-tracking service here
+    super.error(message, stack, context);
+  }
+}
+```
+
+Register the custom logger in `main.ts`:
+
+```typescript main.ts
+import { NestFactory } from '@nestjs/core';
+import { AppModule } from './app.module';
+import { AppLogger } from './common/logger/app-logger';
+
+async function bootstrap() {
+  const app = await NestFactory.create(AppModule, {
+    bufferLogs: true, // buffer early bootstrap logs until the logger is ready
+  });
+  app.useLogger(new AppLogger('App'));
+  await app.listen(3000);
+}
+bootstrap();
+```
+
+<Note>
+Extend `ConsoleLogger`, not `Logger`. Since NestJS v9, extending the `Logger` class is not supported and will throw an error at startup.
+</Note>
+
+## JSON logging
+
+`ConsoleLogger` supports JSON output natively. This is useful for log aggregation systems like Datadog, Loki, or CloudWatch:
+
+```typescript
+new ConsoleLogger({ json: true, colors: false })
+```
+
+Each log message is emitted as a JSON object:
+
+```json
+{"level":"log","pid":12345,"timestamp":1700000000000,"message":"Fetching all cats","context":"CatsService"}
+```
+
+## Implementing a custom LoggerService
+
+You can replace the built-in logger entirely by providing a class that implements the `LoggerService` interface:
+
+```typescript common/logger/logger.service.ts
+import { LoggerService, Injectable } from '@nestjs/common';
+
+@Injectable()
+export class MyCustomLogger implements LoggerService {
+  log(message: any, context?: string) {
+    console.log(`[LOG] ${context ? `[${context}]` : ''} ${message}`);
+  }
+
+  error(message: any, stack?: string, context?: string) {
+    console.error(`[ERR] ${context ? `[${context}]` : ''} ${message}`, stack);
+  }
+
+  warn(message: any, context?: string) {
+    console.warn(`[WARN] ${context ? `[${context}]` : ''} ${message}`);
+  }
+
+  debug(message: any, context?: string) {
+    console.debug(`[DBG] ${context ? `[${context}]` : ''} ${message}`);
+  }
+
+  verbose(message: any, context?: string) {
+    console.log(`[VRB] ${context ? `[${context}]` : ''} ${message}`);
+  }
+}
+```
+
+## Third-party loggers
+
+For structured logging with advanced transport options, integrate a purpose-built library:
+
+<Tabs>
+  <Tab title="Winston">
+    ```bash
+    npm install nest-winston winston
+    ```
+
+    ```typescript app.module.ts
+    import { Module } from '@nestjs/common';
+    import { WinstonModule } from 'nest-winston';
+    import * as winston from 'winston';
+
+    @Module({
+      imports: [
+        WinstonModule.forRoot({
+          transports: [
+            new winston.transports.Console({
+              format: winston.format.combine(
+                winston.format.timestamp(),
+                winston.format.json(),
+              ),
+            }),
+          ],
+        }),
+      ],
+    })
+    export class AppModule {}
+    ```
+
+    ```typescript main.ts
+    import { WINSTON_MODULE_NEST_PROVIDER } from 'nest-winston';
+
+    const app = await NestFactory.create(AppModule);
+    app.useLogger(app.get(WINSTON_MODULE_NEST_PROVIDER));
+    ```
+  </Tab>
+  <Tab title="Pino">
+    ```bash
+    npm install nestjs-pino pino-http
+    ```
+
+    ```typescript app.module.ts
+    import { Module } from '@nestjs/common';
+    import { LoggerModule } from 'nestjs-pino';
+
+    @Module({
+      imports: [
+        LoggerModule.forRoot({
+          pinoHttp: {
+            level: process.env.NODE_ENV === 'production' ? 'info' : 'debug',
+            transport:
+              process.env.NODE_ENV !== 'production'
+                ? { target: 'pino-pretty' }
+                : undefined,
+          },
+        }),
+      ],
+    })
+    export class AppModule {}
+    ```
+  </Tab>
+</Tabs>
+
+<Tip>
+Set `bufferLogs: true` in `NestFactory.create()` when using a custom logger. This buffers all messages emitted during the bootstrap phase and flushes them once your logger is attached, so you do not lose early startup logs.
+</Tip>

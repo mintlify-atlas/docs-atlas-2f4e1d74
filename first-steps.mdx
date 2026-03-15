@@ -1,0 +1,306 @@
+---
+title: "First steps"
+description: "Walk through every file the NestJS CLI generates and understand how bootstrapping, modules, controllers, and providers fit together."
+keywords: ["nestjs", "first steps", "main.ts", "NestFactory", "AppModule", "controller", "provider", "bootstrap"]
+---
+
+This page takes a detailed look at the starter project the NestJS CLI scaffolds. By the end you will understand how the application boots, how its pieces connect, and how to add a new endpoint.
+
+## Prerequisites
+
+Complete the [Quickstart](/quickstart) first. You should have a project created with `nest new` and the server running on port 3000.
+
+## The entry point: `main.ts`
+
+Every NestJS application starts in `src/main.ts`. The file bootstraps the application using `NestFactory`:
+
+```typescript src/main.ts
+import { NestFactory } from '@nestjs/core';
+import { AppModule } from './app.module';
+
+async function bootstrap() {
+  const app = await NestFactory.create(AppModule);
+  await app.listen(3000);
+}
+bootstrap();
+```
+
+`NestFactory.create()` accepts an entry module and an optional options object. It scans the module graph, wires up dependency injection, and returns an `INestApplication` instance. Calling `app.listen(3000)` starts the HTTP server.
+
+<Tip>
+  `NestFactory.create()` also accepts an HTTP adapter as its second argument, which lets you swap Express for Fastify. See the [Quickstart](/quickstart#switching-to-fastify) for an example.
+</Tip>
+
+### Lifecycle at a glance
+
+When `NestFactory.create(AppModule)` runs, NestJS:
+
+1. Scans `AppModule` and all imported modules recursively.
+2. Builds a dependency graph from the collected providers.
+3. Instantiates every provider in the correct order (dependencies first).
+4. Registers all controllers and maps their routes.
+5. Calls `OnModuleInit` and `OnApplicationBootstrap` lifecycle hooks.
+6. Returns the application instance, ready to listen.
+
+## The root module: `app.module.ts`
+
+Modules are the fundamental unit of application structure. Every NestJS app has at least one module — the **root module** — which serves as the starting point for Nest's module graph.
+
+```typescript src/app.module.ts
+import { Module } from '@nestjs/common';
+import { AppController } from './app.controller';
+import { AppService } from './app.service';
+
+@Module({
+  imports: [],
+  controllers: [AppController],
+  providers: [AppService],
+})
+export class AppModule {}
+```
+
+The `@Module()` decorator accepts a metadata object with four optional properties:
+
+| Property | Description |
+|----------|-------------|
+| `imports` | Other modules whose exported providers this module needs. |
+| `controllers` | Controllers defined in this module. |
+| `providers` | Services and other injectables scoped to this module. |
+| `exports` | Providers from this module that other modules can import. |
+
+<Note>
+  As your application grows, you will split `AppModule` into feature modules. Each feature module (e.g. `UsersModule`, `OrdersModule`) encapsulates its own controllers and providers and is imported into `AppModule`.
+</Note>
+
+## The controller: `app.controller.ts`
+
+Controllers are responsible for handling incoming requests and returning responses. The `@Controller()` decorator marks a class as a controller. HTTP method decorators — `@Get()`, `@Post()`, `@Put()`, `@Delete()`, and so on — bind handler methods to specific routes.
+
+```typescript src/app.controller.ts
+import { Controller, Get } from '@nestjs/common';
+import { AppService } from './app.service';
+
+@Controller()
+export class AppController {
+  constructor(private readonly appService: AppService) {}
+
+  @Get()
+  getHello(): string {
+    return this.appService.getHello();
+  }
+}
+```
+
+Breaking this down:
+
+- `@Controller()` with no argument maps the controller to the root path (`/`).
+- `@Get()` with no argument maps `getHello` to `GET /`.
+- `appService` is injected via the constructor. NestJS resolves and provides the instance automatically.
+
+A controller decorated with `@Controller('cats')` would map to the `/cats` prefix. Combining it with `@Get(':id')` on a method would handle `GET /cats/:id`.
+
+## The provider: `app.service.ts`
+
+Providers hold business logic. Any class decorated with `@Injectable()` can be provided to and injected into other classes.
+
+```typescript src/app.service.ts
+import { Injectable } from '@nestjs/common';
+
+@Injectable()
+export class AppService {
+  getHello(): string {
+    return 'Hello World!';
+  }
+}
+```
+
+`@Injectable()` attaches metadata that tells NestJS's IoC container this class is available for injection. You register it under `providers` in the module, and then declare it as a constructor parameter anywhere in that module's scope.
+
+## Adding a new endpoint
+
+Let's add a `GET /hello/:name` route that returns a personalised greeting.
+
+<Steps>
+
+<Step title="Update the service">
+
+Add a `getGreeting` method to `AppService`:
+
+```typescript src/app.service.ts
+import { Injectable } from '@nestjs/common';
+
+@Injectable()
+export class AppService {
+  getHello(): string {
+    return 'Hello World!';
+  }
+
+  getGreeting(name: string): string {
+    return `Hello, ${name}!`;
+  }
+}
+```
+
+</Step>
+
+<Step title="Add the route to the controller">
+
+Use `@Get()` with a route parameter and `@Param()` to extract it:
+
+```typescript src/app.controller.ts
+import { Controller, Get, Param } from '@nestjs/common';
+import { AppService } from './app.service';
+
+@Controller()
+export class AppController {
+  constructor(private readonly appService: AppService) {}
+
+  @Get()
+  getHello(): string {
+    return this.appService.getHello();
+  }
+
+  @Get('hello/:name')
+  getGreeting(@Param('name') name: string): string {
+    return this.appService.getGreeting(name);
+  }
+}
+```
+
+</Step>
+
+<Step title="Test the new route">
+
+If your server is running in watch mode (`npm run start:dev`), the change is applied automatically. Test the endpoint:
+
+```bash
+curl http://localhost:3000/hello/NestJS
+# Hello, NestJS!
+```
+
+</Step>
+
+</Steps>
+
+## A more complete example
+
+The `sample/01-cats-app` directory in the NestJS repository shows a fuller application with a dedicated feature module, DTOs, interfaces, guards, and pipes. Here is its module:
+
+```typescript src/cats/cats.module.ts
+import { Module } from '@nestjs/common';
+import { CatsController } from './cats.controller';
+import { CatsService } from './cats.service';
+
+@Module({
+  controllers: [CatsController],
+  providers: [CatsService],
+})
+export class CatsModule {}
+```
+
+And the controller that handles `GET /cats` and `POST /cats`:
+
+```typescript src/cats/cats.controller.ts
+import { Body, Controller, Get, Param, Post, UseGuards } from '@nestjs/common';
+import { CatsService } from './cats.service';
+import { CreateCatDto } from './dto/create-cat.dto';
+import { Cat } from './interfaces/cat.interface';
+
+@Controller('cats')
+export class CatsController {
+  constructor(private readonly catsService: CatsService) {}
+
+  @Post()
+  async create(@Body() createCatDto: CreateCatDto) {
+    this.catsService.create(createCatDto);
+  }
+
+  @Get()
+  async findAll(): Promise<Cat[]> {
+    return this.catsService.findAll();
+  }
+
+  @Get(':id')
+  findOne(@Param('id') id: string) {
+    return this.catsService.findOne(Number(id));
+  }
+}
+```
+
+And the injectable service:
+
+```typescript src/cats/cats.service.ts
+import { Injectable } from '@nestjs/common';
+import { Cat } from './interfaces/cat.interface';
+
+@Injectable()
+export class CatsService {
+  private readonly cats: Cat[] = [];
+
+  create(cat: Cat) {
+    this.cats.push(cat);
+  }
+
+  findAll(): Promise<Cat[]> {
+    return Promise.resolve(this.cats);
+  }
+}
+```
+
+<Tip>
+  Organise your application into feature modules early. A module per domain (e.g. `CatsModule`, `UsersModule`) keeps related code together and makes the dependency graph explicit.
+</Tip>
+
+## TypeScript vs JavaScript
+
+All examples in the NestJS documentation are in TypeScript. If your project uses JavaScript, the core APIs are identical but you need to configure Babel to transform decorators.
+
+<Tabs>
+  <Tab title="TypeScript">
+
+```typescript
+import { Injectable } from '@nestjs/common';
+
+@Injectable()
+export class AppService {
+  getHello(): string {
+    return 'Hello World!';
+  }
+}
+```
+
+  </Tab>
+  <Tab title="JavaScript">
+
+```javascript
+import { Injectable } from '@nestjs/common';
+
+@Injectable()
+export class AppService {
+  getHello() {
+    return 'Hello World!';
+  }
+}
+```
+
+  </Tab>
+</Tabs>
+
+## What's next
+
+Now that you understand the application skeleton, explore the core building blocks in depth:
+
+<Columns cols={2}>
+  <Card title="Modules" icon="puzzle-piece" href="/core/modules">
+    Learn how to split your application into feature modules and manage imports and exports.
+  </Card>
+  <Card title="Controllers" icon="route" href="/core/controllers">
+    Handle route parameters, query strings, request bodies, headers, and responses.
+  </Card>
+  <Card title="Providers" icon="gear" href="/core/providers">
+    Understand injection scopes, custom providers, and async providers.
+  </Card>
+  <Card title="Middleware" icon="filter" href="/core/middleware">
+    Add middleware functions that execute before route handlers.
+  </Card>
+</Columns>

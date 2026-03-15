@@ -1,0 +1,162 @@
+---
+title: WebSocket decorators
+description: "SubscribeMessage, MessageBody, ConnectedSocket, Ack, and the WsResponse interface from @nestjs/websockets."
+---
+
+All WebSocket decorators are exported from `@nestjs/websockets`.
+
+---
+
+## `@SubscribeMessage()`
+
+Marks a gateway method as a handler for a specific WebSocket event. The method is invoked whenever a client emits an event matching the given message name.
+
+```typescript
+const SubscribeMessage: <T = string>(message: T) => MethodDecorator
+```
+
+<ParamField path="message" type="T" required>
+  The event name to listen for. Typically a string, but can be any serializable value depending on the adapter.
+</ParamField>
+
+```typescript
+import { SubscribeMessage, MessageBody } from '@nestjs/websockets';
+
+@SubscribeMessage('events')
+handleEvent(@MessageBody() data: string): string {
+  return data; // returned value is emitted back to the sender
+}
+```
+
+The handler can return:
+- A plain value — sent back to the emitting client as a response.
+- A `WsResponse<T>` object — emits the specified event with the provided data.
+- An `Observable<WsResponse<T>>` — emits each item in the stream.
+- `void` / nothing — no response is sent.
+
+---
+
+## `@MessageBody()`
+
+Parameter decorator that extracts the message payload from a WebSocket event. Can optionally extract a named property and apply pipes.
+
+```typescript
+function MessageBody(): ParameterDecorator
+function MessageBody(
+  ...pipes: (Type<PipeTransform> | PipeTransform)[]
+): ParameterDecorator
+function MessageBody(
+  propertyKey: string,
+  ...pipes: (Type<PipeTransform> | PipeTransform)[]
+): ParameterDecorator
+```
+
+<ParamField path="propertyKey" type="string">
+  A specific property to extract from the payload object.
+</ParamField>
+
+<ParamField path="pipes" type="(Type<PipeTransform> | PipeTransform)[]">
+  Pipes to validate or transform the extracted value.
+</ParamField>
+
+```typescript
+@SubscribeMessage('create_user')
+createUser(
+  @MessageBody(new ValidationPipe()) createUserDto: CreateUserDto,
+) {
+  return this.usersService.create(createUserDto);
+}
+
+@SubscribeMessage('get_user')
+getUser(@MessageBody('id') id: string) {
+  return this.usersService.findOne(id);
+}
+```
+
+---
+
+## `@ConnectedSocket()`
+
+Parameter decorator that injects the client socket instance.
+
+```typescript
+const ConnectedSocket: () => ParameterDecorator
+```
+
+```typescript
+import { SubscribeMessage, ConnectedSocket, MessageBody } from '@nestjs/websockets';
+import { Socket } from 'socket.io';
+
+@SubscribeMessage('join_room')
+joinRoom(
+  @MessageBody() room: string,
+  @ConnectedSocket() client: Socket,
+) {
+  client.join(room);
+}
+```
+
+---
+
+## `@Ack()`
+
+Parameter decorator that injects the Socket.IO acknowledgement callback. When you use `@Ack()`, you take full control of sending the acknowledgement manually. The framework no longer sends an automatic acknowledgement based on the return value.
+
+```typescript
+function Ack(): ParameterDecorator
+```
+
+```typescript
+import { SubscribeMessage, MessageBody, Ack } from '@nestjs/websockets';
+
+@SubscribeMessage('events')
+onEvent(
+  @MessageBody() data: string,
+  @Ack() ack: (response: any) => void,
+) {
+  // Manually acknowledge with custom data
+  ack({ status: 'ok', received: data });
+}
+```
+
+<Warning>
+  When you inject `@Ack()`, do not return a value from the handler — the framework will not send an additional response.
+</Warning>
+
+---
+
+## `WsResponse<T>`
+
+Return this interface from a `@SubscribeMessage()` handler to emit a named event back to the client, rather than responding to the original message event.
+
+```typescript
+interface WsResponse<T = any> {
+  event: string;
+  data: T;
+}
+```
+
+<ResponseField name="event" type="string" required>
+  The event name the client should listen for.
+</ResponseField>
+<ResponseField name="data" type="T" required>
+  The payload to send with the event.
+</ResponseField>
+
+```typescript
+import { SubscribeMessage, WsResponse } from '@nestjs/websockets';
+import { Observable, from } from 'rxjs';
+import { map } from 'rxjs/operators';
+
+@SubscribeMessage('events')
+findAll(): Observable<WsResponse<number>> {
+  return from([1, 2, 3]).pipe(
+    map(item => ({ event: 'events', data: item })),
+  );
+}
+
+@SubscribeMessage('ping')
+pong(): WsResponse<string> {
+  return { event: 'pong', data: 'pong' };
+}
+```

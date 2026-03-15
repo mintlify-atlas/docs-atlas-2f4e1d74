@@ -1,0 +1,146 @@
+---
+title: Module
+description: The @Module decorator and related interfaces for organizing application structure in NestJS.
+---
+
+## `@Module()`
+
+Marks a class as a Nest module. Modules define the boundaries of a feature area in the application — they declare which controllers handle requests, which providers are available for injection, which modules they depend on, and which providers they expose to other modules.
+
+```typescript
+function Module(metadata: ModuleMetadata): ClassDecorator
+```
+
+<ParamField path="metadata" type="ModuleMetadata" required>
+  Module configuration object.
+
+  <Expandable title="ModuleMetadata fields" defaultOpen>
+    <ResponseField name="imports" type="Array<Type | DynamicModule | Promise<DynamicModule> | ForwardReference>">
+      Modules whose exported providers are required inside this module. Importing a module makes its exported providers available for injection within the current module.
+    </ResponseField>
+    <ResponseField name="controllers" type="Type[]">
+      Controllers to instantiate within this module. Nest registers their route handlers automatically.
+    </ResponseField>
+    <ResponseField name="providers" type="Provider[]">
+      Providers instantiated by the Nest injector. May include services, repositories, factories, helpers, and any other injectable values. See the [dependency injection](/api/core/dependency-injection) reference for all provider shapes.
+    </ResponseField>
+    <ResponseField name="exports" type="Array<DynamicModule | string | symbol | Provider | ForwardReference | Abstract | Function>">
+      The subset of providers from this module that should be available to modules that import this one. You can export a provider by token, type, or re-export an entire imported module.
+    </ResponseField>
+  </Expandable>
+</ParamField>
+
+### Usage example
+
+```typescript
+import { Module } from '@nestjs/common';
+import { CatsController } from './cats.controller';
+import { CatsService } from './cats.service';
+import { DatabaseModule } from '../database/database.module';
+
+@Module({
+  imports: [DatabaseModule],
+  controllers: [CatsController],
+  providers: [CatsService],
+  exports: [CatsService],
+})
+export class CatsModule {}
+```
+
+---
+
+## `@Global()`
+
+Makes a module globally scoped. Once imported into any module, a global module's exports are available throughout the entire application without needing to import the module again.
+
+```typescript
+function Global(): ClassDecorator
+```
+
+<Tip>
+  Use `@Global()` sparingly. It is most appropriate for infrastructure modules (e.g., configuration, logging, database connections) that need to be available everywhere. Overusing it can obscure the dependency structure of your application.
+</Tip>
+
+```typescript
+import { Global, Module } from '@nestjs/common';
+import { ConfigService } from './config.service';
+
+@Global()
+@Module({
+  providers: [ConfigService],
+  exports: [ConfigService],
+})
+export class ConfigModule {}
+```
+
+---
+
+## `DynamicModule` interface
+
+A module that returns its configuration programmatically at runtime, instead of using static `@Module()` metadata.
+
+```typescript
+interface DynamicModule extends ModuleMetadata {
+  module: Type<any>;
+  global?: boolean;
+}
+```
+
+<ResponseField name="module" type="Type<any>" required>
+  The module class this configuration belongs to.
+</ResponseField>
+<ResponseField name="global" type="boolean" default="false">
+  When `true`, makes the dynamic module globally scoped.
+</ResponseField>
+
+A dynamic module extends `ModuleMetadata`, so it also accepts `imports`, `controllers`, `providers`, and `exports`.
+
+```typescript
+import { DynamicModule, Module } from '@nestjs/common';
+import { ConfigService } from './config.service';
+
+@Module({})
+export class ConfigModule {
+  static forRoot(options: ConfigOptions): DynamicModule {
+    return {
+      module: ConfigModule,
+      providers: [
+        { provide: 'CONFIG_OPTIONS', useValue: options },
+        ConfigService,
+      ],
+      exports: [ConfigService],
+      global: true,
+    };
+  }
+}
+```
+
+---
+
+## `ConfigurableModuleBuilder`
+
+`ConfigurableModuleBuilder` (from `@nestjs/common`) generates the boilerplate for a configurable module — producing typed `forRoot()` / `forRootAsync()` methods and corresponding option classes automatically.
+
+```typescript
+import { ConfigurableModuleBuilder } from '@nestjs/common';
+
+export interface CacheModuleOptions {
+  ttl: number;
+}
+
+export const {
+  ConfigurableModuleClass,
+  MODULE_OPTIONS_TOKEN,
+} = new ConfigurableModuleBuilder<CacheModuleOptions>()
+  .setClassMethodName('forRoot')
+  .build();
+
+@Module({})
+export class CacheModule extends ConfigurableModuleClass {}
+```
+
+This generates `CacheModule.forRoot(options)` and `CacheModule.forRootAsync(options)` automatically, along with a `MODULE_OPTIONS_TOKEN` injection token you can use to access the options inside providers.
+
+<Note>
+  `ConfigurableModuleBuilder` is available from NestJS v9.1 onward.
+</Note>

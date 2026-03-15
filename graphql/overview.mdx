@@ -1,0 +1,221 @@
+---
+title: 'GraphQL overview'
+description: 'Integrate GraphQL into your NestJS application using @nestjs/graphql and Apollo Server.'
+keywords: ['graphql', 'nestjs', 'apollo', 'code-first', 'schema-first', 'GraphQLModule']
+---
+
+NestJS provides first-class support for GraphQL via the `@nestjs/graphql` package. The integration wraps [Apollo Server](https://www.apollographql.com/docs/apollo-server/) and exposes a `GraphQLModule` that you register in your application.
+
+You can build your API using one of two approaches:
+
+- **Code-first** — you write TypeScript classes decorated with `@ObjectType()`, `@Resolver()`, and related decorators. NestJS generates the SDL schema for you.
+- **Schema-first** — you write a `.graphql` (SDL) file by hand, then bind resolvers to the schema through NestJS.
+
+## Installation
+
+<Steps>
+  <Step title="Install the required packages">
+    <CodeGroup>
+
+    ```bash npm
+    npm install @nestjs/graphql @nestjs/apollo @apollo/server graphql
+    ```
+
+    ```bash yarn
+    yarn add @nestjs/graphql @nestjs/apollo @apollo/server graphql
+    ```
+
+    ```bash pnpm
+    pnpm add @nestjs/graphql @nestjs/apollo @apollo/server graphql
+    ```
+
+    </CodeGroup>
+  </Step>
+  <Step title="Import GraphQLModule into your root module">
+    Add `GraphQLModule.forRoot()` to the `imports` array of your `AppModule`.
+  </Step>
+</Steps>
+
+## Setting up `GraphQLModule`
+
+`GraphQLModule.forRoot<ApolloDriverConfig>()` accepts a configuration object. You must always specify `driver: ApolloDriver`.
+
+<Tabs>
+  <Tab title="Code-first">
+    In code-first mode, set `autoSchemaFile` to the path where NestJS should write the generated SDL file.
+
+    ```typescript app.module.ts
+    import { Module } from '@nestjs/common';
+    import { GraphQLModule } from '@nestjs/graphql';
+    import { ApolloDriver, ApolloDriverConfig } from '@nestjs/apollo';
+    import { join } from 'path';
+    import { RecipesModule } from './recipes/recipes.module';
+
+    @Module({
+      imports: [
+        RecipesModule,
+        GraphQLModule.forRoot<ApolloDriverConfig>({
+          driver: ApolloDriver,
+          autoSchemaFile: join(process.cwd(), 'src/schema.gql'),
+        }),
+      ],
+    })
+    export class AppModule {}
+    ```
+
+    Set `autoSchemaFile: true` to keep the schema in memory without writing it to disk.
+  </Tab>
+  <Tab title="Schema-first">
+    In schema-first mode, point `typePaths` to the glob pattern that matches your `.graphql` files.
+
+    ```typescript app.module.ts
+    import { Module } from '@nestjs/common';
+    import { GraphQLModule } from '@nestjs/graphql';
+    import { ApolloDriver, ApolloDriverConfig } from '@nestjs/apollo';
+    import { join } from 'path';
+    import { CatsModule } from './cats/cats.module';
+
+    @Module({
+      imports: [
+        CatsModule,
+        GraphQLModule.forRoot<ApolloDriverConfig>({
+          driver: ApolloDriver,
+          typePaths: [join(__dirname, '**', '*.graphql')],
+        }),
+      ],
+    })
+    export class AppModule {}
+    ```
+  </Tab>
+</Tabs>
+
+## Common configuration options
+
+| Option | Type | Description |
+|---|---|---|
+| `driver` | `ApolloDriver` | Required. The Apollo driver adapter. |
+| `autoSchemaFile` | `string \| true` | (Code-first) Path to write the generated schema, or `true` for in-memory. |
+| `typePaths` | `string[]` | (Schema-first) Glob patterns pointing to `.graphql` SDL files. |
+| `playground` | `boolean` | Enable the Apollo Sandbox playground. Defaults to `true` in development. |
+| `installSubscriptionHandlers` | `boolean` | Enable WebSocket-based subscriptions. |
+| `sortSchema` | `boolean` | Lexicographically sort the generated schema. |
+| `includeStacktraceInErrorResponses` | `boolean` | Include stack traces in error responses. Disable in production. |
+| `context` | `Function \| object` | Build the GraphQL context object from the incoming request. |
+
+## Accessing the GraphQL playground
+
+By default, Apollo Sandbox is available at `/graphql` in development. You can disable it explicitly:
+
+```typescript
+GraphQLModule.forRoot<ApolloDriverConfig>({
+  driver: ApolloDriver,
+  autoSchemaFile: true,
+  playground: false,
+})
+```
+
+<Warning>
+Disable `playground` and set `includeStacktraceInErrorResponses: false` in production to avoid leaking schema and error details.
+</Warning>
+
+## Async configuration
+
+When your configuration depends on services (for example, a `ConfigService`), use `forRootAsync()`:
+
+```typescript app.module.ts
+import { Module } from '@nestjs/common';
+import { GraphQLModule } from '@nestjs/graphql';
+import { ApolloDriver, ApolloDriverConfig } from '@nestjs/apollo';
+import { ConfigModule, ConfigService } from '@nestjs/config';
+
+@Module({
+  imports: [
+    ConfigModule.forRoot(),
+    GraphQLModule.forRootAsync<ApolloDriverConfig>({
+      driver: ApolloDriver,
+      imports: [ConfigModule],
+      useFactory: (configService: ConfigService) => ({
+        autoSchemaFile: true,
+        playground: configService.get('NODE_ENV') !== 'production',
+      }),
+      inject: [ConfigService],
+    }),
+  ],
+})
+export class AppModule {}
+```
+
+## Minimal working example
+
+The steps below produce a running GraphQL API with a single `hello` query.
+
+<Steps>
+  <Step title="Define the resolver">
+    ```typescript hello.resolver.ts
+    import { Query, Resolver } from '@nestjs/graphql';
+
+    @Resolver()
+    export class HelloResolver {
+      @Query(() => String)
+      hello(): string {
+        return 'Hello, world!';
+      }
+    }
+    ```
+  </Step>
+  <Step title="Register it in a module">
+    ```typescript hello.module.ts
+    import { Module } from '@nestjs/common';
+    import { HelloResolver } from './hello.resolver';
+
+    @Module({
+      providers: [HelloResolver],
+    })
+    export class HelloModule {}
+    ```
+  </Step>
+  <Step title="Configure GraphQLModule in AppModule">
+    ```typescript app.module.ts
+    import { Module } from '@nestjs/common';
+    import { GraphQLModule } from '@nestjs/graphql';
+    import { ApolloDriver, ApolloDriverConfig } from '@nestjs/apollo';
+    import { HelloModule } from './hello/hello.module';
+
+    @Module({
+      imports: [
+        HelloModule,
+        GraphQLModule.forRoot<ApolloDriverConfig>({
+          driver: ApolloDriver,
+          autoSchemaFile: true,
+        }),
+      ],
+    })
+    export class AppModule {}
+    ```
+  </Step>
+  <Step title="Start the application and open the playground">
+    ```bash
+    npm run start:dev
+    ```
+
+    Navigate to `http://localhost:3000/graphql` and run:
+
+    ```graphql
+    query {
+      hello
+    }
+    ```
+  </Step>
+</Steps>
+
+<Columns cols={2}>
+  <Card title="Resolvers" icon="code" href="/graphql/resolvers">
+    Define queries and types with @Resolver, @Query, @ObjectType, and @Field.
+  </Card>
+  <Card title="Mutations" icon="pencil" href="/graphql/mutations">
+    Modify data with @Mutation and @InputType.
+  </Card>
+  <Card title="Subscriptions" icon="radio" href="/graphql/subscriptions">
+    Push real-time updates to clients with @Subscription and PubSub.
+  </Card>
+</Columns>

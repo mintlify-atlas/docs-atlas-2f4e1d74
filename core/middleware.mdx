@@ -1,0 +1,151 @@
+---
+title: 'Middleware'
+description: 'Apply middleware functions to routes in NestJS using the NestMiddleware interface and MiddlewareConsumer.'
+keywords: ['nestjs', 'middleware', 'NestMiddleware', 'MiddlewareConsumer', 'request', 'response']
+---
+
+Middleware is a function called **before** the route handler. Middleware functions have access to the request and response objects and the `next()` function in the request-response cycle. They can execute any code, modify the request or response objects, end the cycle, or call `next()` to pass control to the next middleware or route handler.
+
+<Note>
+  NestJS middleware is equivalent to Express middleware by default. It runs in the same position in the pipeline as Express middleware, before guards and interceptors.
+</Note>
+
+## Implementing middleware
+
+Create a middleware class that implements the `NestMiddleware` interface:
+
+```typescript common/middleware/logger.middleware.ts
+import { Injectable, NestMiddleware } from '@nestjs/common';
+import { Request, Response, NextFunction } from 'express';
+
+@Injectable()
+export class LoggerMiddleware implements NestMiddleware {
+  use(req: Request, res: Response, next: NextFunction) {
+    console.log(`[${req.method}] ${req.url}`);
+    next();
+  }
+}
+```
+
+The `NestMiddleware` interface requires a single `use(req, res, next)` method. Always call `next()` to pass control — failing to do so will leave the request hanging.
+
+## Applying middleware
+
+Middleware is registered in a module's `configure()` method. The module must implement the `NestModule` interface:
+
+```typescript app.module.ts
+import { Module, NestModule, MiddlewareConsumer } from '@nestjs/common';
+import { LoggerMiddleware } from './common/middleware/logger.middleware';
+import { CatsModule } from './cats/cats.module';
+
+@Module({
+  imports: [CatsModule],
+})
+export class AppModule implements NestModule {
+  configure(consumer: MiddlewareConsumer) {
+    consumer
+      .apply(LoggerMiddleware)
+      .forRoutes('cats');
+  }
+}
+```
+
+### Scoping by HTTP method
+
+You can restrict middleware to specific HTTP methods using a `RouteInfo` object:
+
+```typescript
+import { RequestMethod } from '@nestjs/common';
+
+configure(consumer: MiddlewareConsumer) {
+  consumer
+    .apply(LoggerMiddleware)
+    .forRoutes({ path: 'cats', method: RequestMethod.GET });
+}
+```
+
+### Scoping by controller
+
+Passing a controller class to `forRoutes()` applies middleware to every route defined in that controller:
+
+```typescript
+import { CatsController } from './cats/cats.controller';
+
+configure(consumer: MiddlewareConsumer) {
+  consumer
+    .apply(LoggerMiddleware)
+    .forRoutes(CatsController);
+}
+```
+
+### Excluding routes
+
+Use `.exclude()` to prevent middleware from running on specific routes:
+
+```typescript
+import { RequestMethod } from '@nestjs/common';
+
+configure(consumer: MiddlewareConsumer) {
+  consumer
+    .apply(LoggerMiddleware)
+    .exclude(
+      { path: 'cats', method: RequestMethod.GET },
+      'cats/(.*)',
+    )
+    .forRoutes(CatsController);
+}
+```
+
+## Chaining multiple middleware
+
+Pass multiple middleware to `apply()` to execute them sequentially:
+
+```typescript
+consumer
+  .apply(CorsMiddleware, RateLimitMiddleware, LoggerMiddleware)
+  .forRoutes(CatsController);
+```
+
+## Functional middleware
+
+When middleware has no dependencies, a plain function is simpler and more performant:
+
+```typescript common/middleware/logger.middleware.ts
+import { Request, Response, NextFunction } from 'express';
+
+export function logger(req: Request, res: Response, next: NextFunction) {
+  console.log(`[${req.method}] ${req.url}`);
+  next();
+}
+```
+
+```typescript app.module.ts
+import { logger } from './common/middleware/logger.middleware';
+
+configure(consumer: MiddlewareConsumer) {
+  consumer
+    .apply(logger)
+    .forRoutes(CatsController);
+}
+```
+
+## Global middleware
+
+To apply middleware to every registered route at once, use `app.use()` in the bootstrap function:
+
+```typescript main.ts
+import { NestFactory } from '@nestjs/core';
+import { AppModule } from './app.module';
+import { logger } from './common/middleware/logger.middleware';
+
+async function bootstrap() {
+  const app = await NestFactory.create(AppModule);
+  app.use(logger);
+  await app.listen(3000);
+}
+bootstrap();
+```
+
+<Warning>
+  Globally registered middleware (via `app.use()`) cannot access the Nest DI container. If you need to inject dependencies, apply the middleware inside a module's `configure()` method instead.
+</Warning>

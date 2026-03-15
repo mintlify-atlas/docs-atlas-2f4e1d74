@@ -1,0 +1,376 @@
+---
+title: Controller
+description: Decorators for defining HTTP controllers, route handlers, and extracting request data in NestJS.
+---
+
+## `@Controller()`
+
+Marks a class as a Nest controller. Controllers handle inbound HTTP requests and return responses. Each controller is typically grouped around a feature resource (e.g., users, orders).
+
+```typescript
+function Controller(): ClassDecorator
+function Controller(prefix: string | string[]): ClassDecorator
+function Controller(options: ControllerOptions): ClassDecorator
+```
+
+<ParamField path="prefix" type="string | string[]">
+  A route path prefix prepended to every route handler in the class. For example, `'cats'` makes all routes available under `/cats`.
+</ParamField>
+
+<ParamField path="options" type="ControllerOptions">
+  <Expandable title="ControllerOptions fields">
+    <ResponseField name="path" type="string | string[]">
+      Route path prefix. Equivalent to passing a string directly.
+    </ResponseField>
+    <ResponseField name="host" type="string | RegExp | Array<string | RegExp>">
+      HTTP host filter. Route handlers are only invoked when the `Host` header matches this value.
+    </ResponseField>
+    <ResponseField name="scope" type="Scope">
+      Injection scope for the controller instance. See the [Scope enum](/api/core/injectable#scope-enum).
+    </ResponseField>
+    <ResponseField name="durable" type="boolean">
+      Marks the controller as durable. Only valid with `scope: Scope.REQUEST`.
+    </ResponseField>
+    <ResponseField name="version" type="string | string[] | symbol">
+      Version(s) for all routes in the controller. Requires `enableVersioning()` on the application.
+    </ResponseField>
+  </Expandable>
+</ParamField>
+
+```typescript
+import { Controller } from '@nestjs/common';
+
+@Controller('cats')
+export class CatsController {}
+
+@Controller({ path: 'cats', version: '1' })
+export class CatsV1Controller {}
+```
+
+---
+
+## HTTP method decorators
+
+Each decorator maps a route handler to an HTTP method and an optional path. The path is appended to the controller prefix.
+
+```typescript
+// All share the same signature:
+(path?: string | string[]): MethodDecorator
+```
+
+| Decorator | HTTP method |
+|---|---|
+| `@Get(path?)` | GET |
+| `@Post(path?)` | POST |
+| `@Put(path?)` | PUT |
+| `@Patch(path?)` | PATCH |
+| `@Delete(path?)` | DELETE |
+| `@Options(path?)` | OPTIONS |
+| `@Head(path?)` | HEAD |
+| `@All(path?)` | All methods |
+| `@Search(path?)` | SEARCH |
+
+```typescript
+import { Controller, Get, Post, Body, Param } from '@nestjs/common';
+
+@Controller('cats')
+export class CatsController {
+  @Get()
+  findAll() {
+    return [];
+  }
+
+  @Get(':id')
+  findOne(@Param('id') id: string) {
+    return { id };
+  }
+
+  @Post()
+  create(@Body() createCatDto: CreateCatDto) {
+    return createCatDto;
+  }
+}
+```
+
+---
+
+## Route parameter decorators
+
+Use these parameter decorators inside route handler methods to extract data from the request.
+
+### `@Param()`
+
+Extracts route parameters from `req.params`.
+
+```typescript
+function Param(): ParameterDecorator
+function Param(...pipes: (Type<PipeTransform> | PipeTransform)[]): ParameterDecorator
+function Param(property: string, ...pipes: (Type<PipeTransform> | PipeTransform)[]): ParameterDecorator
+```
+
+```typescript
+@Get(':id')
+findOne(@Param('id') id: string) {}
+
+@Get(':id')
+findOne(@Param('id', ParseIntPipe) id: number) {}
+```
+
+---
+
+### `@Query()`
+
+Extracts query parameters from `req.query`.
+
+```typescript
+function Query(): ParameterDecorator
+function Query(...pipes: (Type<PipeTransform> | PipeTransform)[]): ParameterDecorator
+function Query(property: string, ...pipes: (Type<PipeTransform> | PipeTransform)[]): ParameterDecorator
+```
+
+```typescript
+@Get()
+findAll(@Query('limit') limit: string) {}
+```
+
+---
+
+### `@Body()`
+
+Extracts the request body from `req.body`. Optionally extracts a named property.
+
+```typescript
+function Body(): ParameterDecorator
+function Body(...pipes: (Type<PipeTransform> | PipeTransform)[]): ParameterDecorator
+function Body(property: string, ...pipes: (Type<PipeTransform> | PipeTransform)[]): ParameterDecorator
+```
+
+```typescript
+@Post()
+create(@Body() dto: CreateCatDto) {}
+
+@Post()
+create(@Body('name') name: string) {}
+```
+
+---
+
+### `@Headers()`
+
+Extracts the `headers` object or a single header value from `req.headers`.
+
+```typescript
+const Headers: (property?: string) => ParameterDecorator
+```
+
+```typescript
+findAll(@Headers('accept') accept: string) {}
+```
+
+---
+
+### `@Ip()`
+
+Extracts `req.ip`.
+
+```typescript
+const Ip: () => ParameterDecorator
+```
+
+---
+
+### `@HostParam()`
+
+Extracts host parameters when the controller uses a `host` filter with dynamic segments.
+
+```typescript
+function HostParam(): ParameterDecorator
+function HostParam(property: string): ParameterDecorator
+```
+
+---
+
+### `@Req()` / `@Request()`
+
+Injects the full underlying request object.
+
+```typescript
+const Req: () => ParameterDecorator   // alias for Request
+const Request: () => ParameterDecorator
+```
+
+---
+
+### `@Res()` / `@Response()`
+
+Injects the full underlying response object.
+
+```typescript
+const Res: (options?: ResponseDecoratorOptions) => ParameterDecorator  // alias for Response
+const Response: (options?: ResponseDecoratorOptions) => ParameterDecorator
+```
+
+<ParamField path="options.passthrough" type="boolean" default="false">
+  When `true`, Nest's response serialization pipeline still runs even though you have access to the raw response object.
+</ParamField>
+
+<Warning>
+  When you inject `@Res()` without `passthrough: true`, you are responsible for sending the response manually. Nest will not send a response automatically.
+</Warning>
+
+---
+
+### `@Next()`
+
+Injects the `next` middleware function.
+
+```typescript
+const Next: () => ParameterDecorator
+```
+
+---
+
+### `@Session()`
+
+Extracts `req.session`.
+
+```typescript
+const Session: () => ParameterDecorator
+```
+
+---
+
+## Response decorators
+
+### `@HttpCode()`
+
+Overrides the default HTTP response status code for a route handler.
+
+```typescript
+function HttpCode(statusCode: number): MethodDecorator
+```
+
+```typescript
+@Post()
+@HttpCode(204)
+create() {}
+```
+
+---
+
+### `@Header()`
+
+Sets a custom response header.
+
+```typescript
+function Header(name: string, value: string): MethodDecorator
+```
+
+```typescript
+@Get()
+@Header('Cache-Control', 'no-store')
+findAll() {}
+```
+
+---
+
+### `@Redirect()`
+
+Redirects the response to the specified URL.
+
+```typescript
+function Redirect(url?: string, statusCode?: number): MethodDecorator
+```
+
+```typescript
+@Get()
+@Redirect('https://nestjs.com', 301)
+findAll() {}
+```
+
+You can override the redirect URL or status code dynamically by returning an object from the route handler:
+
+```typescript
+@Get()
+@Redirect()
+dynamicRedirect() {
+  return { url: 'https://example.com', statusCode: 302 };
+}
+```
+
+---
+
+### `@Render()`
+
+Specifies the template to render for MVC applications.
+
+```typescript
+function Render(template: string): MethodDecorator
+```
+
+```typescript
+@Get()
+@Render('index')
+root() {
+  return { message: 'Hello world' };
+}
+```
+
+---
+
+### `@Sse()`
+
+Marks a route handler as a Server-Sent Events (SSE) endpoint. The handler must return an `Observable<MessageEvent>`.
+
+```typescript
+function Sse(path?: string): MethodDecorator
+```
+
+```typescript
+import { Sse, MessageEvent } from '@nestjs/common';
+import { Observable, interval } from 'rxjs';
+import { map } from 'rxjs/operators';
+
+@Sse('sse')
+sse(): Observable<MessageEvent> {
+  return interval(1000).pipe(
+    map(() => ({ data: { time: new Date().toISOString() } })),
+  );
+}
+```
+
+---
+
+## Enhancer decorators
+
+### `@UseGuards()`
+
+Applies guards to a controller class or route handler.
+
+```typescript
+function UseGuards(...guards: (CanActivate | Function)[]): ClassDecorator & MethodDecorator
+```
+
+### `@UseInterceptors()`
+
+Applies interceptors to a controller class or route handler.
+
+```typescript
+function UseInterceptors(...interceptors: (NestInterceptor | Function)[]): ClassDecorator & MethodDecorator
+```
+
+### `@UsePipes()`
+
+Applies pipes to a controller class or route handler.
+
+```typescript
+function UsePipes(...pipes: (PipeTransform | Function)[]): ClassDecorator & MethodDecorator
+```
+
+### `@UseFilters()`
+
+Applies exception filters to a controller class or route handler.
+
+```typescript
+function UseFilters(...filters: (ExceptionFilter | Function)[]): ClassDecorator & MethodDecorator
+```

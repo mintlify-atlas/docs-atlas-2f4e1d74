@@ -1,0 +1,428 @@
+---
+title: 'Gateways'
+description: 'Build real-time, bidirectional event-driven servers with WebSocket gateways in NestJS.'
+keywords: ['websockets', 'gateway', 'socket.io', 'real-time', 'events', 'nest']
+---
+
+A gateway is a class annotated with `@WebSocketGateway()` that enables real-time, bidirectional, event-based communication between clients and the server. Gateways are provider-like — they can inject dependencies through the constructor and can be injected into other providers. Under the hood, NestJS uses [Socket.io](https://socket.io) by default, but you can swap it for the native `ws` library or any other adapter.
+
+<Note>
+Gateways must be registered as `providers` inside a module before NestJS will connect them to the socket server.
+</Note>
+
+## Installation
+
+<Steps>
+  <Step title="Install the Socket.io adapter">
+    ```bash
+    npm install @nestjs/websockets @nestjs/platform-socket.io
+    ```
+  </Step>
+  <Step title="Create a module and register the gateway">
+    ```typescript events.module.ts
+    import { Module } from '@nestjs/common';
+    import { EventsGateway } from './events.gateway';
+
+    @Module({
+      providers: [EventsGateway],
+    })
+    export class EventsModule {}
+    ```
+  </Step>
+</Steps>
+
+## The `@WebSocketGateway()` decorator
+
+`@WebSocketGateway()` marks a class as a Nest gateway. It accepts an optional port and an options object whose shape matches the Socket.io [`ServerOptions`](https://socket.io/docs/v4/server-options/).
+
+```typescript
+// Decorator signatures
+WebSocketGateway(port?: number): ClassDecorator
+WebSocketGateway(options?: GatewayMetadata): ClassDecorator
+WebSocketGateway(port?: number, options?: GatewayMetadata): ClassDecorator
+```
+
+When no port is provided (or `0` is used), the gateway attaches to the same HTTP server that runs your NestJS application.
+
+```typescript events.gateway.ts
+import { WebSocketGateway } from '@nestjs/websockets';
+
+// Attach to the application HTTP server
+@WebSocketGateway()
+export class EventsGateway {}
+
+// Listen on a dedicated port
+@WebSocketGateway(8080)
+export class EventsGateway {}
+
+// Listen on a dedicated port inside a namespace
+@WebSocketGateway(8080, { namespace: 'events' })
+export class EventsGateway {}
+```
+
+### Common options
+
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `namespace` | `string \| RegExp` | — | Socket.io namespace name or pattern. |
+| `cors` | `CorsOptions` | — | CORS configuration forwarded to Socket.io. |
+| `path` | `string` | `"/socket.io"` | Path captured by the HTTP server. |
+| `transports` | `Array<'polling' \| 'websocket'>` | both | Low-level transports to enable. |
+| `pingTimeout` | `number` | `20000` | Milliseconds before a client with no pong is considered disconnected. |
+| `pingInterval` | `number` | `25000` | Milliseconds between ping packets. |
+| `connectTimeout` | `number` | `45000` | Milliseconds before a namespaced client without activity is closed. |
+| `maxHttpBufferSize` | `number` | `1e6` | Maximum message size in bytes (DoS protection). |
+| `allowEIO3` | `boolean` | `false` | Enable backwards compatibility with Socket.io v2 clients. |
+
+## Handling events with `@SubscribeMessage()`
+
+Decorate a gateway method with `@SubscribeMessage(event)` to register it as a handler for the named event.
+
+```typescript events.gateway.ts
+import {
+  MessageBody,
+  SubscribeMessage,
+  WebSocketGateway,
+} from '@nestjs/websockets';
+
+@WebSocketGateway({ cors: { origin: '*' } })
+export class EventsGateway {
+  @SubscribeMessage('chat')
+  handleMessage(@MessageBody() message: string): string {
+    return message; // echoed back as an acknowledgement
+  }
+}
+```
+
+The `@SubscribeMessage()` decorator accepts any value as the event name — it is simply stored as metadata and matched against the incoming event string.
+
+## Parameter decorators
+
+### `@MessageBody()`
+
+Extracts the payload from the incoming message.
+
+```typescript
+import { MessageBody, SubscribeMessage, WebSocketGateway } from '@nestjs/websockets';
+
+@WebSocketGateway()
+export class EventsGateway {
+  // Extract the entire payload
+  @SubscribeMessage('events')
+  handleAll(@MessageBody() data: unknown) {
+    return data;
+  }
+
+  // Extract a nested property
+  @SubscribeMessage('create')
+  handleCreate(@MessageBody('name') name: string) {
+    return { created: name };
+  }
+
+  // Apply a pipe inline
+  @SubscribeMessage('update')
+  handleUpdate(@MessageBody(new ValidationPipe()) dto: UpdateDto) {
+    return dto;
+  }
+}
+```
+
+**Signatures:**
+
+```typescript
+MessageBody(): ParameterDecorator
+MessageBody(...pipes: (Type<PipeTransform> | PipeTransform)[]): ParameterDecorator
+MessageBody(propertyKey: string, ...pipes: (Type<PipeTransform> | PipeTransform)[]): ParameterDecorator
+```
+
+### `@ConnectedSocket()`
+
+Injects the raw socket instance for the current connection.
+
+```typescript
+import {
+  ConnectedSocket,
+  MessageBody,
+  SubscribeMessage,
+  WebSocketGateway,
+} from '@nestjs/websockets';
+import { Socket } from 'socket.io';
+
+@WebSocketGateway()
+export class EventsGateway {
+  @SubscribeMessage('join')
+  handleJoin(
+    @MessageBody() room: string,
+    @ConnectedSocket() client: Socket,
+  ) {
+    client.join(room);
+    return { joined: room };
+  }
+}
+```
+
+<Warning>
+Mutating the socket object directly can produce side effects that bypass the framework's lifecycle. Prefer returning data or emitting through the `@WebSocketServer()` instance wherever possible.
+</Warning>
+
+### `@Ack()`
+
+Extracts the acknowledgement callback passed by the client. When you use `@Ack()`, the framework will **not** automatically call the callback — you are responsible for calling it manually.
+
+```typescript
+import {
+  Ack,
+  MessageBody,
+  SubscribeMessage,
+  WebSocketGateway,
+} from '@nestjs/websockets';
+
+@WebSocketGateway()
+export class EventsGateway {
+  @SubscribeMessage('events')
+  handleEvent(
+    @MessageBody() data: string,
+    @Ack() ack: (response: unknown) => void,
+  ) {
+    // Process data, then manually acknowledge
+    ack({ status: 'ok', data });
+  }
+}
+```
+
+## Life-cycle hooks
+
+Implement these interfaces to run code at specific points in the connection life-cycle.
+
+| Interface | Method | When it fires |
+|---|---|---|
+| `OnGatewayInit<T>` | `afterInit(server: T)` | After the socket server is created and bound. |
+| `OnGatewayConnection<T>` | `handleConnection(client: T, ...args)` | When a new client connects. |
+| `OnGatewayDisconnect<T>` | `handleDisconnect(client: T)` | When a client disconnects. |
+
+```typescript events.gateway.ts
+import {
+  OnGatewayConnection,
+  OnGatewayDisconnect,
+  OnGatewayInit,
+  WebSocketGateway,
+  WebSocketServer,
+} from '@nestjs/websockets';
+import { Logger } from '@nestjs/common';
+import { Server, Socket } from 'socket.io';
+
+@WebSocketGateway()
+export class EventsGateway
+  implements OnGatewayInit, OnGatewayConnection, OnGatewayDisconnect
+{
+  private readonly logger = new Logger(EventsGateway.name);
+
+  @WebSocketServer()
+  server: Server;
+
+  afterInit(server: Server) {
+    this.logger.log('Socket server initialized');
+  }
+
+  handleConnection(client: Socket, ...args: unknown[]) {
+    this.logger.log(`Client connected: ${client.id}`);
+  }
+
+  handleDisconnect(client: Socket) {
+    this.logger.log(`Client disconnected: ${client.id}`);
+  }
+}
+```
+
+## Accessing the server instance
+
+Decorate a class property with `@WebSocketServer()` to have NestJS inject the underlying server instance after initialization.
+
+```typescript
+import { WebSocketGateway, WebSocketServer } from '@nestjs/websockets';
+import { Server } from 'socket.io';
+
+@WebSocketGateway()
+export class EventsGateway {
+  @WebSocketServer()
+  server: Server;
+}
+```
+
+The property will be `null` until `afterInit` fires, so avoid reading it in the constructor.
+
+## Returning data from event handlers
+
+NestJS supports three return types from a `@SubscribeMessage()` handler:
+
+<Tabs>
+  <Tab title="Synchronous value">
+    Return a plain value to send it as an acknowledgement to the caller.
+
+    ```typescript
+    @SubscribeMessage('identity')
+    async handleIdentity(@MessageBody() data: number): Promise<number> {
+      return data; // sent back as ack
+    }
+    ```
+  </Tab>
+  <Tab title="WsResponse object">
+    Return a `WsResponse<T>` object to emit a named event back to the caller.
+
+    ```typescript
+    import { WsResponse } from '@nestjs/websockets';
+
+    @SubscribeMessage('events')
+    handleEvent(@MessageBody() data: string): WsResponse<string> {
+      return { event: 'events', data: `echo: ${data}` };
+    }
+    ```
+
+    The `WsResponse` interface is:
+
+    ```typescript
+    interface WsResponse<T = any> {
+      event: string;
+      data: T;
+    }
+    ```
+  </Tab>
+  <Tab title="Observable">
+    Return an `Observable<WsResponse<T>>` to emit a stream of events.
+
+    ```typescript
+    import { WsResponse } from '@nestjs/websockets';
+    import { from, Observable } from 'rxjs';
+    import { map } from 'rxjs/operators';
+
+    @SubscribeMessage('events')
+    handleStream(
+      @MessageBody() data: any,
+    ): Observable<WsResponse<number>> {
+      return from([1, 2, 3]).pipe(
+        map(item => ({ event: 'events', data: item })),
+      );
+    }
+    ```
+  </Tab>
+</Tabs>
+
+## Broadcasting to all clients
+
+Use the `server` property to emit events to every connected client.
+
+```typescript
+@SubscribeMessage('broadcast')
+handleBroadcast(@MessageBody() message: string) {
+  this.server.emit('message', message);
+}
+```
+
+## Emitting to a room
+
+Socket.io rooms let you group clients and target messages efficiently.
+
+```typescript
+@SubscribeMessage('join-room')
+handleJoin(
+  @MessageBody() room: string,
+  @ConnectedSocket() client: Socket,
+) {
+  client.join(room);
+}
+
+@SubscribeMessage('room-message')
+handleRoomMessage(@MessageBody() payload: { room: string; message: string }) {
+  // Broadcast to everyone in the room (including sender)
+  this.server.to(payload.room).emit('room-message', payload.message);
+}
+```
+
+## CORS configuration
+
+Pass a `cors` option to `@WebSocketGateway()` to configure cross-origin access.
+
+```typescript
+@WebSocketGateway({
+  cors: {
+    origin: ['https://example.com', 'https://app.example.com'],
+    credentials: true,
+  },
+})
+export class EventsGateway {}
+```
+
+To allow all origins during development:
+
+```typescript
+@WebSocketGateway({ cors: { origin: '*' } })
+export class EventsGateway {}
+```
+
+<Warning>
+Setting `origin: '*'` disables CORS protection. Only use it in development or when you fully control all clients.
+</Warning>
+
+## Complete example
+
+```typescript events.gateway.ts
+import {
+  MessageBody,
+  OnGatewayConnection,
+  OnGatewayDisconnect,
+  OnGatewayInit,
+  SubscribeMessage,
+  WebSocketGateway,
+  WebSocketServer,
+  WsResponse,
+} from '@nestjs/websockets';
+import { Logger } from '@nestjs/common';
+import { from, Observable } from 'rxjs';
+import { map } from 'rxjs/operators';
+import { Server } from 'socket.io';
+
+@WebSocketGateway({
+  cors: { origin: '*' },
+})
+export class EventsGateway
+  implements OnGatewayInit, OnGatewayConnection, OnGatewayDisconnect
+{
+  private readonly logger = new Logger(EventsGateway.name);
+
+  @WebSocketServer()
+  server: Server;
+
+  afterInit(server: Server) {
+    this.logger.log('Initialized');
+  }
+
+  handleConnection(client: any) {
+    this.logger.log(`Connected: ${client.id}`);
+  }
+
+  handleDisconnect(client: any) {
+    this.logger.log(`Disconnected: ${client.id}`);
+  }
+
+  @SubscribeMessage('events')
+  handleEvents(
+    @MessageBody() data: any,
+  ): Observable<WsResponse<number>> {
+    return from([1, 2, 3]).pipe(map(item => ({ event: 'events', data: item })));
+  }
+
+  @SubscribeMessage('identity')
+  async handleIdentity(@MessageBody() data: number): Promise<number> {
+    return data;
+  }
+}
+```
+
+<Columns cols={2}>
+  <Card title="Exception filters" icon="shield" href="/websockets/exception-filters">
+    Handle errors thrown inside gateway handlers.
+  </Card>
+  <Card title="Adapters" icon="plug" href="/websockets/adapters">
+    Swap Socket.io for the native ws library or a custom adapter.
+  </Card>
+</Columns>

@@ -1,0 +1,233 @@
+---
+title: 'Interceptors'
+description: 'Wrap handler execution with NestJS interceptors to log activity, map responses, handle timeouts, and more.'
+keywords: ['nestjs', 'interceptors', 'NestInterceptor', 'CallHandler', 'RxJS', 'response mapping', 'logging']
+---
+
+An interceptor is a class annotated with the `@Injectable()` decorator that implements the `NestInterceptor` interface. Interceptors wrap the execution of route handlers, giving you the ability to:
+
+- Execute logic **before** and **after** a route handler runs.
+- Transform the result returned from a handler.
+- Transform exceptions thrown from a handler.
+- Extend basic function behavior.
+- Override a handler entirely (e.g., for caching).
+
+Interceptors are inspired by the [Aspect-Oriented Programming](https://en.wikipedia.org/wiki/Aspect-oriented_programming) technique.
+
+## The `NestInterceptor` interface
+
+```typescript
+export interface NestInterceptor<T = any, R = any> {
+  intercept(
+    context: ExecutionContext,
+    next: CallHandler<T>,
+  ): Observable<R> | Promise<Observable<R>>;
+}
+```
+
+The `intercept()` method receives:
+
+- `context` — an `ExecutionContext` providing access to the request pipeline details (same as in guards).
+- `next` — a `CallHandler` whose `handle()` method returns an `Observable` representing the route handler's response stream.
+
+Calling `next.handle()` invokes the route handler. If you don't call it, the handler is never executed.
+
+## Logging interceptor
+
+The following interceptor logs how long a route handler takes to execute:
+
+```typescript core/interceptors/logging.interceptor.ts
+import {
+  CallHandler,
+  ExecutionContext,
+  Injectable,
+  NestInterceptor,
+} from '@nestjs/common';
+import { Observable } from 'rxjs';
+import { tap } from 'rxjs/operators';
+
+@Injectable()
+export class LoggingInterceptor implements NestInterceptor {
+  intercept(context: ExecutionContext, next: CallHandler): Observable<any> {
+    console.log('Before...');
+
+    const now = Date.now();
+    return next
+      .handle()
+      .pipe(tap(() => console.log(`After... ${Date.now() - now}ms`)));
+  }
+}
+```
+
+`tap()` runs a side-effect without modifying the value flowing through the stream.
+
+## Response mapping
+
+Use `map()` to transform the value returned by the handler. The following interceptor wraps every response in a `{ data }` envelope:
+
+```typescript core/interceptors/transform.interceptor.ts
+import {
+  CallHandler,
+  ExecutionContext,
+  Injectable,
+  NestInterceptor,
+} from '@nestjs/common';
+import { Observable } from 'rxjs';
+import { map } from 'rxjs/operators';
+
+export interface Response<T> {
+  data: T;
+}
+
+@Injectable()
+export class TransformInterceptor<T>
+  implements NestInterceptor<T, Response<T>>
+{
+  intercept(
+    context: ExecutionContext,
+    next: CallHandler<T>,
+  ): Observable<Response<T>> {
+    return next.handle().pipe(map(data => ({ data })));
+  }
+}
+```
+
+A `GET /cats` that used to return `[{ name: 'Garfield' }]` now returns:
+
+```json
+{
+  "data": [{ "name": "Garfield" }]
+}
+```
+
+## Exception mapping
+
+Use `catchError()` to intercept exceptions thrown by the handler and remap them:
+
+```typescript common/interceptors/exception.interceptor.ts
+import {
+  CallHandler,
+  ExecutionContext,
+  HttpException,
+  HttpStatus,
+  Injectable,
+  NestInterceptor,
+} from '@nestjs/common';
+import { Observable, throwError } from 'rxjs';
+import { catchError } from 'rxjs/operators';
+
+@Injectable()
+export class ErrorsInterceptor implements NestInterceptor {
+  intercept(context: ExecutionContext, next: CallHandler): Observable<any> {
+    return next
+      .handle()
+      .pipe(
+        catchError(err =>
+          throwError(
+            () => new HttpException('New message', HttpStatus.BAD_GATEWAY),
+          ),
+        ),
+      );
+  }
+}
+```
+
+## Timeout interceptor
+
+Use RxJS's `timeout` operator to cancel requests that take too long:
+
+```typescript common/interceptors/timeout.interceptor.ts
+import {
+  CallHandler,
+  ExecutionContext,
+  Injectable,
+  NestInterceptor,
+} from '@nestjs/common';
+import { Observable } from 'rxjs';
+import { timeout } from 'rxjs/operators';
+
+@Injectable()
+export class TimeoutInterceptor implements NestInterceptor {
+  intercept(context: ExecutionContext, next: CallHandler): Observable<any> {
+    return next.handle().pipe(timeout(5000));
+  }
+}
+```
+
+## Binding interceptors
+
+Apply interceptors at the method, controller, or global level with `@UseInterceptors()`.
+
+<Tabs>
+  <Tab title="Method scope">
+    ```typescript
+    import { UseInterceptors } from '@nestjs/common';
+
+    @UseInterceptors(LoggingInterceptor)
+    @Get()
+    findAll() {
+      return this.catsService.findAll();
+    }
+    ```
+  </Tab>
+  <Tab title="Controller scope">
+    ```typescript
+    @UseInterceptors(LoggingInterceptor)
+    @Controller('cats')
+    export class CatsController {}
+    ```
+  </Tab>
+  <Tab title="Global scope">
+    ```typescript main.ts
+    async function bootstrap() {
+      const app = await NestFactory.create(AppModule);
+      app.useGlobalInterceptors(new LoggingInterceptor());
+      await app.listen(3000);
+    }
+    ```
+  </Tab>
+</Tabs>
+
+Register global interceptors through the module system to support dependency injection:
+
+```typescript core/core.module.ts
+import { Module } from '@nestjs/common';
+import { APP_INTERCEPTOR } from '@nestjs/core';
+import { LoggingInterceptor } from './interceptors/logging.interceptor';
+import { TransformInterceptor } from './interceptors/transform.interceptor';
+
+@Module({
+  providers: [
+    { provide: APP_INTERCEPTOR, useClass: TransformInterceptor },
+    { provide: APP_INTERCEPTOR, useClass: LoggingInterceptor },
+  ],
+})
+export class CoreModule {}
+```
+
+<Accordion title="Caching with interceptors">
+  Interceptors can short-circuit the handler entirely by returning a cached response without calling `next.handle()`:
+
+  ```typescript
+  import {
+    CallHandler,
+    ExecutionContext,
+    Injectable,
+    NestInterceptor,
+  } from '@nestjs/common';
+  import { Observable, of } from 'rxjs';
+
+  @Injectable()
+  export class CacheInterceptor implements NestInterceptor {
+    intercept(context: ExecutionContext, next: CallHandler): Observable<any> {
+      const isCached = true; // replace with real cache lookup
+      if (isCached) {
+        return of([]); // return cached value directly
+      }
+      return next.handle();
+    }
+  }
+  ```
+
+  When you return an `Observable` directly (without calling `next.handle()`), the route handler, pipes, and guards that run after the interceptor are all skipped.
+</Accordion>

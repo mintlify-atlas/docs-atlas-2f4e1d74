@@ -1,0 +1,246 @@
+---
+title: WebSocket gateways
+description: "WebSocketGateway, WebSocketServer, GatewayMetadata, and lifecycle interfaces for real-time communication in NestJS."
+---
+
+## `@WebSocketGateway()`
+
+Marks a class as a Nest WebSocket gateway. By default, Nest uses Socket.IO as the underlying WebSocket library, but you can swap it for any compliant adapter.
+
+```typescript
+function WebSocketGateway(port?: number): ClassDecorator
+function WebSocketGateway<T extends Record<string, any> = GatewayMetadata>(
+  options?: T,
+): ClassDecorator
+function WebSocketGateway<T extends Record<string, any> = GatewayMetadata>(
+  port?: number,
+  options?: T,
+): ClassDecorator
+```
+
+<ParamField path="port" type="number">
+  Port for the WebSocket server. When omitted (or `0`), the gateway shares the HTTP server's port.
+</ParamField>
+
+<ParamField path="options" type="GatewayMetadata">
+  Gateway configuration. Extends the Socket.IO server options.
+
+  <Expandable title="GatewayMetadata fields">
+    <ResponseField name="namespace" type="string | RegExp">
+      Socket.IO namespace for the gateway.
+    </ResponseField>
+    <ResponseField name="path" type="string" default="/socket.io">
+      The path to capture on the HTTP server.
+    </ResponseField>
+    <ResponseField name="cors" type="CorsOptions">
+      CORS options forwarded to the Socket.IO server.
+    </ResponseField>
+    <ResponseField name="pingTimeout" type="number" default="20000">
+      Milliseconds before closing a connection with no pong packet.
+    </ResponseField>
+    <ResponseField name="pingInterval" type="number" default="25000">
+      Milliseconds between ping packets.
+    </ResponseField>
+    <ResponseField name="connectTimeout" type="number" default="45000">
+      Milliseconds before closing a client with no namespace handshake.
+    </ResponseField>
+    <ResponseField name="maxHttpBufferSize" type="number" default="1000000">
+      Maximum message size in bytes before the session is closed.
+    </ResponseField>
+    <ResponseField name="transports" type="Array<'polling' | 'websocket'>" default="['polling', 'websocket']">
+      Enabled low-level transports.
+    </ResponseField>
+    <ResponseField name="allowUpgrades" type="boolean" default="true">
+      Whether transport upgrades are allowed.
+    </ResponseField>
+    <ResponseField name="serveClient" type="boolean" default="true">
+      Whether to serve the Socket.IO client files.
+    </ResponseField>
+    <ResponseField name="adapter" type="any">
+      Custom Socket.IO adapter instance.
+    </ResponseField>
+    <ResponseField name="allowEIO3" type="boolean" default="false">
+      Enable compatibility with Socket.IO v2 clients.
+    </ResponseField>
+    <ResponseField name="cookie" type="any">
+      Configuration for the SID cookie sent in handshake response headers.
+    </ResponseField>
+    <ResponseField name="allowRequest" type="(req, fn) => void">
+      Function to accept or reject handshake/upgrade requests.
+    </ResponseField>
+    <ResponseField name="upgradeTimeout" type="number" default="10000">
+      Milliseconds before an incomplete transport upgrade is cancelled.
+    </ResponseField>
+    <ResponseField name="destroyUpgrade" type="boolean" default="true">
+      Destroy unhandled upgrade requests.
+    </ResponseField>
+    <ResponseField name="destroyUpgradeTimeout" type="number" default="1000">
+      Milliseconds after which unhandled upgrade requests are ended.
+    </ResponseField>
+  </Expandable>
+</ParamField>
+
+### Usage examples
+
+```typescript
+import { WebSocketGateway } from '@nestjs/websockets';
+
+// Share the HTTP server port
+@WebSocketGateway()
+export class EventsGateway {}
+
+// Dedicated port
+@WebSocketGateway(8080)
+export class EventsGateway {}
+
+// With namespace and CORS
+@WebSocketGateway({ namespace: '/events', cors: { origin: '*' } })
+export class EventsGateway {}
+```
+
+---
+
+## `@WebSocketServer()`
+
+A property decorator that injects the native WebSocket server instance into the gateway class. The injected value is the Socket.IO `Server` object (or the native server for other adapters).
+
+```typescript
+const WebSocketServer: () => PropertyDecorator
+```
+
+```typescript
+import { WebSocketGateway, WebSocketServer } from '@nestjs/websockets';
+import { Server } from 'socket.io';
+
+@WebSocketGateway()
+export class EventsGateway {
+  @WebSocketServer()
+  server: Server;
+
+  broadcast(event: string, data: any) {
+    this.server.emit(event, data);
+  }
+}
+```
+
+---
+
+## Lifecycle interfaces
+
+Implement these interfaces to hook into gateway lifecycle events. All three are optional.
+
+### `OnGatewayInit`
+
+Called once after the WebSocket server has been initialized.
+
+```typescript
+interface OnGatewayInit<T = any> {
+  afterInit(server: T): any;
+}
+```
+
+```typescript
+import { OnGatewayInit } from '@nestjs/websockets';
+import { Server } from 'socket.io';
+
+@WebSocketGateway()
+export class EventsGateway implements OnGatewayInit {
+  afterInit(server: Server) {
+    console.log('Gateway initialized', server);
+  }
+}
+```
+
+---
+
+### `OnGatewayConnection`
+
+Called each time a new client connects to the gateway.
+
+```typescript
+interface OnGatewayConnection<T = any> {
+  handleConnection(client: T, ...args: any[]): any;
+}
+```
+
+```typescript
+import { OnGatewayConnection } from '@nestjs/websockets';
+import { Socket } from 'socket.io';
+
+@WebSocketGateway()
+export class EventsGateway implements OnGatewayConnection {
+  handleConnection(client: Socket, ...args: any[]) {
+    console.log(`Client connected: ${client.id}`);
+  }
+}
+```
+
+---
+
+### `OnGatewayDisconnect`
+
+Called when a client disconnects.
+
+```typescript
+interface OnGatewayDisconnect<T = any> {
+  handleDisconnect(client: T): any;
+}
+```
+
+```typescript
+import { OnGatewayDisconnect } from '@nestjs/websockets';
+import { Socket } from 'socket.io';
+
+@WebSocketGateway()
+export class EventsGateway implements OnGatewayDisconnect {
+  handleDisconnect(client: Socket) {
+    console.log(`Client disconnected: ${client.id}`);
+  }
+}
+```
+
+---
+
+## Full gateway example
+
+```typescript
+import {
+  WebSocketGateway,
+  WebSocketServer,
+  SubscribeMessage,
+  MessageBody,
+  ConnectedSocket,
+  OnGatewayInit,
+  OnGatewayConnection,
+  OnGatewayDisconnect,
+} from '@nestjs/websockets';
+import { Server, Socket } from 'socket.io';
+
+@WebSocketGateway({ cors: { origin: '*' } })
+export class EventsGateway
+  implements OnGatewayInit, OnGatewayConnection, OnGatewayDisconnect
+{
+  @WebSocketServer()
+  server: Server;
+
+  afterInit(server: Server) {
+    console.log('WebSocket server initialized');
+  }
+
+  handleConnection(client: Socket) {
+    console.log(`Client connected: ${client.id}`);
+  }
+
+  handleDisconnect(client: Socket) {
+    console.log(`Client disconnected: ${client.id}`);
+  }
+
+  @SubscribeMessage('message')
+  handleMessage(
+    @MessageBody() data: string,
+    @ConnectedSocket() client: Socket,
+  ): string {
+    return data; // echoed back to the sender
+  }
+}
+```

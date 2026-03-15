@@ -1,122 +1,156 @@
 {
   "$schema": "https://mintlify.com/docs.json",
-  "theme": "mint",
-  "name": "Mint Starter Kit",
+  "name": "NestJS",
+  "theme": "linden",
   "colors": {
-    "primary": "#16A34A",
-    "light": "#07C983",
-    "dark": "#15803D"
+    "primary": "#de2850",
+    "light": "#e08cac"
   },
-  "favicon": "/favicon.svg",
+  "favicon": "https://media.brand.dev/29c481de-2859-4cec-b430-eb582a269988.jpg",
+  "logo": {
+    "light": "/logo/light.png",
+    "dark": "/logo/light.png"
+  },
+  "navbar": {
+    "primary": {
+      "type": "github",
+      "href": "https://github.com/nestjs/nest"
+    }
+  },
+  "footer": {
+    "socials": {
+      "github": "https://github.com/nestjs/nest"
+    }
+  },
   "navigation": {
     "tabs": [
       {
-        "tab": "Guides",
+        "tab": "Documentation",
         "groups": [
           {
-            "group": "Getting started",
+            "group": "Get Started",
             "pages": [
-              "index",
+              "introduction",
               "quickstart",
-              "development"
+              "first-steps"
             ]
           },
           {
-            "group": "Customization",
+            "group": "Core Concepts",
             "pages": [
-              "essentials/settings",
-              "essentials/navigation"
+              "core/modules",
+              "core/controllers",
+              "core/providers",
+              "core/middleware",
+              "core/exception-filters",
+              "core/pipes",
+              "core/guards",
+              "core/interceptors"
             ]
           },
           {
-            "group": "Writing content",
+            "group": "Techniques",
             "pages": [
-              "essentials/markdown",
-              "essentials/code",
-              "essentials/images",
-              "essentials/reusable-snippets"
+              "techniques/authentication",
+              "techniques/authorization",
+              "techniques/database",
+              "techniques/configuration",
+              "techniques/validation",
+              "techniques/caching",
+              "techniques/file-upload",
+              "techniques/logging",
+              "techniques/testing"
             ]
           },
           {
-            "group": "AI tools",
+            "group": "Microservices",
             "pages": [
-              "ai-tools/cursor",
-              "ai-tools/claude-code",
-              "ai-tools/windsurf"
+              "microservices/overview",
+              "microservices/tcp",
+              "microservices/redis",
+              "microservices/mqtt",
+              "microservices/nats",
+              "microservices/rabbitmq",
+              "microservices/kafka",
+              "microservices/grpc"
+            ]
+          },
+          {
+            "group": "WebSockets",
+            "pages": [
+              "websockets/gateways",
+              "websockets/exception-filters",
+              "websockets/pipes",
+              "websockets/guards",
+              "websockets/interceptors",
+              "websockets/adapters"
+            ]
+          },
+          {
+            "group": "GraphQL",
+            "pages": [
+              "graphql/overview",
+              "graphql/resolvers",
+              "graphql/mutations",
+              "graphql/subscriptions"
+            ]
+          },
+          {
+            "group": "CLI",
+            "pages": [
+              "cli/overview",
+              "cli/usages",
+              "cli/scripts"
             ]
           }
         ]
       },
       {
-        "tab": "API reference",
+        "tab": "API Reference",
         "groups": [
           {
-            "group": "API documentation",
+            "group": "Core",
             "pages": [
-              "api-reference/introduction"
+              "api/core/nest-factory",
+              "api/core/nest-application",
+              "api/core/injectable",
+              "api/core/module",
+              "api/core/controller",
+              "api/core/dependency-injection"
             ]
           },
           {
-            "group": "Endpoint examples",
+            "group": "Common",
             "pages": [
-              "api-reference/endpoint/get",
-              "api-reference/endpoint/create",
-              "api-reference/endpoint/delete",
-              "api-reference/endpoint/webhook"
+              "api/common/decorators",
+              "api/common/pipes",
+              "api/common/exceptions",
+              "api/common/interfaces"
+            ]
+          },
+          {
+            "group": "Microservices",
+            "pages": [
+              "api/microservices/client",
+              "api/microservices/server",
+              "api/microservices/decorators"
+            ]
+          },
+          {
+            "group": "WebSockets",
+            "pages": [
+              "api/websockets/gateways",
+              "api/websockets/decorators"
+            ]
+          },
+          {
+            "group": "Testing",
+            "pages": [
+              "api/testing/testing-module"
             ]
           }
         ]
       }
-    ],
-    "global": {
-      "anchors": [
-        {
-          "anchor": "Documentation",
-          "href": "https://mintlify.com/docs",
-          "icon": "book-open-cover"
-        },
-        {
-          "anchor": "Blog",
-          "href": "https://mintlify.com/blog",
-          "icon": "newspaper"
-        }
-      ]
-    }
-  },
-  "logo": {
-    "light": "/logo/light.svg",
-    "dark": "/logo/dark.svg"
-  },
-  "navbar": {
-    "links": [
-      {
-        "label": "Support",
-        "href": "mailto:hi@mintlify.com"
-      }
-    ],
-    "primary": {
-      "type": "button",
-      "label": "Dashboard",
-      "href": "https://dashboard.mintlify.com"
-    }
-  },
-  "contextual": {
-    "options": [
-     "copy",
-     "view",
-     "chatgpt",
-     "claude",
-     "perplexity",
-     "mcp",
-     "cursor",
-     "vscode"
-   ]
-  },
-  "footer": {
-    "socials": {
-      "x": "https://x.com/mintlify",
-      "github": "https://github.com/mintlify",
-      "linkedin": "https://linkedin.com/company/mintlify"
-    }
+    ]
   }
 }

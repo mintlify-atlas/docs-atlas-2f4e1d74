@@ -1,0 +1,258 @@
+---
+title: 'Guards'
+description: 'Protect WebSocket gateway handlers with guards, including JWT authentication for socket connections.'
+keywords: ['websockets', 'guards', 'authentication', 'JWT', 'authorization', 'nest']
+---
+
+Guards work in WebSocket gateways the same way they work in HTTP controllers. A guard is a class decorated with `@Injectable()` that implements `CanActivate`. It returns `true` to allow the handler to execute and `false` (or throws) to block it.
+
+When a guard blocks a WebSocket handler, NestJS throws a `WsException` with the message `"Forbidden"`. You can catch this with a [custom exception filter](/websockets/exception-filters).
+
+## Accessing the WebSocket context
+
+Inside a guard, call `context.switchToWs()` to obtain a `WsArgumentsHost` with the following methods:
+
+| Method | Return type | Description |
+|---|---|---|
+| `getClient<T>()` | `T` | The raw socket client for the current connection. |
+| `getData<T>()` | `T` | The payload that triggered the event handler. |
+| `getPattern()` | `string` | The event name that triggered the handler. |
+
+```typescript
+import { CanActivate, ExecutionContext, Injectable } from '@nestjs/common';
+
+@Injectable()
+export class WsGuard implements CanActivate {
+  canActivate(context: ExecutionContext): boolean {
+    const wsCtx = context.switchToWs();
+    const client = wsCtx.getClient();
+    const data   = wsCtx.getData();
+
+    // Your authorization logic here
+    return true;
+  }
+}
+```
+
+## JWT authentication guard
+
+A common pattern is reading a JWT from the socket handshake and validating it before allowing the handler to run.
+
+<Steps>
+  <Step title="Install dependencies">
+    ```bash
+    npm install @nestjs/jwt passport-jwt
+    npm install --save-dev @types/passport-jwt
+    ```
+  </Step>
+  <Step title="Create the guard">
+    ```typescript ws-jwt.guard.ts
+    import {
+      CanActivate,
+      ExecutionContext,
+      Injectable,
+      UnauthorizedException,
+    } from '@nestjs/common';
+    import { JwtService } from '@nestjs/jwt';
+    import { WsException } from '@nestjs/websockets';
+    import { Socket } from 'socket.io';
+
+    @Injectable()
+    export class WsJwtGuard implements CanActivate {
+      constructor(private readonly jwtService: JwtService) {}
+
+      async canActivate(context: ExecutionContext): Promise<boolean> {
+        const client: Socket = context.switchToWs().getClient();
+        const token = client.handshake.auth?.token
+          ?? client.handshake.headers?.authorization?.replace('Bearer ', '');
+
+        if (!token) {
+          throw new WsException('Missing token');
+        }
+
+        try {
+          const payload = await this.jwtService.verifyAsync(token);
+          // Attach user to the socket for later use
+          (client as any).user = payload;
+          return true;
+        } catch {
+          throw new WsException('Invalid token');
+        }
+      }
+    }
+    ```
+  </Step>
+  <Step title="Connect with the JwtModule">
+    ```typescript events.module.ts
+    import { Module } from '@nestjs/common';
+    import { JwtModule } from '@nestjs/jwt';
+    import { EventsGateway } from './events.gateway';
+    import { WsJwtGuard } from './ws-jwt.guard';
+
+    @Module({
+      imports: [
+        JwtModule.register({ secret: process.env.JWT_SECRET }),
+      ],
+      providers: [EventsGateway, WsJwtGuard],
+    })
+    export class EventsModule {}
+    ```
+  </Step>
+</Steps>
+
+## Binding guards
+
+### Method-scoped
+
+```typescript
+import { UseGuards } from '@nestjs/common';
+import {
+  MessageBody,
+  SubscribeMessage,
+  WebSocketGateway,
+} from '@nestjs/websockets';
+import { WsJwtGuard } from './ws-jwt.guard';
+
+@WebSocketGateway()
+export class EventsGateway {
+  @UseGuards(WsJwtGuard)
+  @SubscribeMessage('private')
+  handlePrivate(@MessageBody() data: unknown) {
+    return data;
+  }
+}
+```
+
+### Gateway-scoped
+
+Applying `@UseGuards()` at the class level protects every handler in the gateway.
+
+```typescript events.gateway.ts
+import { UseGuards } from '@nestjs/common';
+import { WebSocketGateway, SubscribeMessage, MessageBody } from '@nestjs/websockets';
+import { WsJwtGuard } from './ws-jwt.guard';
+
+@UseGuards(WsJwtGuard)
+@WebSocketGateway()
+export class EventsGateway {
+  @SubscribeMessage('events')
+  handleEvent(@MessageBody() data: unknown) {
+    return data;
+  }
+
+  @SubscribeMessage('private')
+  handlePrivate(@MessageBody() data: unknown) {
+    return data;
+  }
+}
+```
+
+### Global-scoped
+
+```typescript main.ts
+import { NestFactory } from '@nestjs/core';
+import { AppModule } from './app.module';
+import { WsJwtGuard } from './events/ws-jwt.guard';
+
+async function bootstrap() {
+  const app = await NestFactory.create(AppModule);
+  app.useGlobalGuards(new WsJwtGuard(/* inject deps manually */));
+  await app.listen(3000);
+}
+bootstrap();
+```
+
+<Tip>
+Global guards registered with `useGlobalGuards` cannot inject dependencies because they are created outside the NestJS DI context. Use the `APP_GUARD` token instead:
+
+```typescript
+import { APP_GUARD } from '@nestjs/core';
+
+@Module({
+  providers: [
+    {
+      provide: APP_GUARD,
+      useClass: WsJwtGuard,
+    },
+  ],
+})
+export class AppModule {}
+```
+</Tip>
+
+## Accessing the authenticated user inside a handler
+
+Since the guard attaches the user to the socket object, you can retrieve it with `@ConnectedSocket()`:
+
+```typescript
+import {
+  ConnectedSocket,
+  MessageBody,
+  SubscribeMessage,
+  WebSocketGateway,
+} from '@nestjs/websockets';
+import { UseGuards } from '@nestjs/common';
+import { WsJwtGuard } from './ws-jwt.guard';
+import { Socket } from 'socket.io';
+
+@UseGuards(WsJwtGuard)
+@WebSocketGateway()
+export class EventsGateway {
+  @SubscribeMessage('profile')
+  getProfile(@ConnectedSocket() client: Socket) {
+    return (client as any).user;
+  }
+}
+```
+
+## Role-based guard example
+
+```typescript roles.guard.ts
+import { CanActivate, ExecutionContext, Injectable } from '@nestjs/common';
+import { Reflector } from '@nestjs/core';
+import { WsException } from '@nestjs/websockets';
+import { Socket } from 'socket.io';
+
+export const Roles = (...roles: string[]) =>
+  SetMetadata('roles', roles);
+
+@Injectable()
+export class RolesGuard implements CanActivate {
+  constructor(private readonly reflector: Reflector) {}
+
+  canActivate(context: ExecutionContext): boolean {
+    const requiredRoles = this.reflector.get<string[]>('roles', context.getHandler());
+    if (!requiredRoles) {
+      return true;
+    }
+
+    const client: Socket = context.switchToWs().getClient();
+    const user = (client as any).user;
+
+    if (!user || !requiredRoles.some(role => user.roles?.includes(role))) {
+      throw new WsException('Insufficient permissions');
+    }
+    return true;
+  }
+}
+```
+
+Apply it alongside a JWT guard:
+
+```typescript
+@UseGuards(WsJwtGuard, RolesGuard)
+@SubscribeMessage('admin')
+@Roles('admin')
+handleAdmin(@MessageBody() data: unknown) {
+  return data;
+}
+```
+
+<Columns cols={2}>
+  <Card title="Pipes" icon="filter" href="/websockets/pipes">
+    Validate incoming message payloads before they reach the handler.
+  </Card>
+  <Card title="Interceptors" icon="layers" href="/websockets/interceptors">
+    Intercept and transform event handler responses.
+  </Card>
+</Columns>

@@ -1,0 +1,178 @@
+---
+title: HTTP exceptions
+description: HttpException base class and all built-in HTTP exception subclasses in @nestjs/common.
+---
+
+All HTTP exceptions extend `HttpException`, which extends the native `Error` class. Nest's built-in exceptions filter catches any thrown `HttpException` and turns it into an HTTP response automatically.
+
+---
+
+## `HttpException`
+
+The base class for all Nest HTTP exceptions.
+
+```typescript
+class HttpException extends Error {
+  public cause: unknown;
+
+  constructor(
+    response: string | Record<string, any>,
+    status: number,
+    options?: HttpExceptionOptions,
+  )
+}
+```
+
+### Constructor parameters
+
+<ParamField path="response" type="string | Record<string, any>" required>
+  The response body. Pass a string to set the `message` field, or a plain object to override the entire JSON response body.
+</ParamField>
+
+<ParamField path="status" type="number" required>
+  The HTTP status code. Use the `HttpStatus` enum for type safety.
+</ParamField>
+
+<ParamField path="options" type="HttpExceptionOptions">
+  <Expandable title="HttpExceptionOptions fields">
+    <ResponseField name="cause" type="unknown">
+      The original error that caused this exception. Accessible via the `cause` property. Follows the [Node.js error cause](https://nodejs.org/en/blog/release/v16.9.0/#error-cause) convention.
+    </ResponseField>
+    <ResponseField name="description" type="string">
+      A description string used by subclasses to set the default error message.
+    </ResponseField>
+  </Expandable>
+</ParamField>
+
+### Instance methods
+
+| Method | Return type | Description |
+|---|---|---|
+| `getResponse()` | `string \| object` | Returns the full response body as passed to the constructor. |
+| `getStatus()` | `number` | Returns the HTTP status code. |
+
+### Usage
+
+```typescript
+import { HttpException, HttpStatus } from '@nestjs/common';
+
+// String response
+throw new HttpException('Forbidden', HttpStatus.FORBIDDEN);
+
+// Custom response body
+throw new HttpException(
+  { status: HttpStatus.FORBIDDEN, error: 'This is a custom message' },
+  HttpStatus.FORBIDDEN,
+);
+
+// With cause
+throw new HttpException('Gateway timeout', HttpStatus.GATEWAY_TIMEOUT, {
+  cause: new Error('Redis connection failed'),
+});
+```
+
+---
+
+## Built-in exceptions
+
+Each subclass sets a fixed HTTP status code and uses a sensible default message. All accept the same optional `descriptionOrOptions` parameter:
+
+```typescript
+new SomeException(description?: string | HttpExceptionOptions)
+// or
+new SomeException(objectOrError?: string | object | any, description?: string)
+```
+
+### 4xx Client errors
+
+| Class | Status | Default message |
+|---|---|---|
+| `BadRequestException` | 400 | Bad Request |
+| `UnauthorizedException` | 401 | Unauthorized |
+| `ForbiddenException` | 403 | Forbidden |
+| `NotFoundException` | 404 | Not Found |
+| `MethodNotAllowedException` | 405 | Method Not Allowed |
+| `NotAcceptableException` | 406 | Not Acceptable |
+| `RequestTimeoutException` | 408 | Request Timeout |
+| `ConflictException` | 409 | Conflict |
+| `GoneException` | 410 | Gone |
+| `PayloadTooLargeException` | 413 | Payload Too Large |
+| `UnsupportedMediaTypeException` | 415 | Unsupported Media Type |
+| `UnprocessableEntityException` | 422 | Unprocessable Entity |
+| `PreconditionFailedException` | 412 | Precondition Failed |
+| `ImATeapotException` | 418 | I'm a Teapot |
+| `MisdirectedException` | 421 | Misdirected |
+| `HttpVersionNotSupportedException` | 505 | HTTP Version Not Supported |
+
+### 5xx Server errors
+
+| Class | Status | Default message |
+|---|---|---|
+| `InternalServerErrorException` | 500 | Internal Server Error |
+| `NotImplementedException` | 501 | Not Implemented |
+| `BadGatewayException` | 502 | Bad Gateway |
+| `ServiceUnavailableException` | 503 | Service Unavailable |
+| `GatewayTimeoutException` | 504 | Gateway Timeout |
+
+---
+
+## Usage examples
+
+<CodeGroup>
+
+```typescript Basic usage
+import { NotFoundException } from '@nestjs/common';
+
+async findOne(id: string) {
+  const cat = await this.catsRepository.findOne(id);
+  if (!cat) {
+    throw new NotFoundException(`Cat #${id} not found`);
+  }
+  return cat;
+}
+```
+
+```typescript With custom description
+import { BadRequestException } from '@nestjs/common';
+
+throw new BadRequestException('Invalid email format', {
+  description: 'Email must be a valid RFC 5322 address',
+});
+```
+
+```typescript With cause chain
+import { InternalServerErrorException } from '@nestjs/common';
+
+try {
+  await this.db.query(sql);
+} catch (err) {
+  throw new InternalServerErrorException('Database query failed', {
+    cause: err,
+  });
+}
+```
+
+```typescript Custom exception filter
+import {
+  ExceptionFilter, Catch, ArgumentsHost, HttpException,
+} from '@nestjs/common';
+import { Response } from 'express';
+
+@Catch(HttpException)
+export class HttpExceptionFilter implements ExceptionFilter {
+  catch(exception: HttpException, host: ArgumentsHost) {
+    const ctx = host.switchToHttp();
+    const response = ctx.getResponse<Response>();
+
+    response
+      .status(exception.getStatus())
+      .json(exception.getResponse());
+  }
+}
+```
+
+</CodeGroup>
+
+<Tip>
+  Import the `HttpStatus` enum from `@nestjs/common` to use named constants like `HttpStatus.NOT_FOUND` instead of raw numbers.
+</Tip>

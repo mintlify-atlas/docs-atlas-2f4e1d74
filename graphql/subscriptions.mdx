@@ -1,0 +1,258 @@
+---
+title: 'Subscriptions'
+description: 'Push real-time updates to GraphQL clients using @Subscription, PubSub, and WebSocket transport in NestJS.'
+keywords: ['graphql', 'subscriptions', 'pubsub', 'real-time', 'websocket', 'nestjs']
+---
+
+GraphQL subscriptions let the server push data to clients over a persistent WebSocket connection. NestJS exposes the `@Subscription()` decorator and integrates with `PubSub` from the `graphql-subscriptions` package.
+
+## Installation
+
+<CodeGroup>
+
+```bash npm
+npm install graphql-subscriptions
+```
+
+```bash yarn
+yarn add graphql-subscriptions
+```
+
+```bash pnpm
+pnpm add graphql-subscriptions
+```
+
+</CodeGroup>
+
+## Enabling subscriptions in `GraphQLModule`
+
+Set `installSubscriptionHandlers: true` in your `GraphQLModule` configuration:
+
+```typescript app.module.ts
+import { Module } from '@nestjs/common';
+import { GraphQLModule } from '@nestjs/graphql';
+import { ApolloDriver, ApolloDriverConfig } from '@nestjs/apollo';
+import { join } from 'path';
+import { RecipesModule } from './recipes/recipes.module';
+
+@Module({
+  imports: [
+    RecipesModule,
+    GraphQLModule.forRoot<ApolloDriverConfig>({
+      driver: ApolloDriver,
+      autoSchemaFile: join(process.cwd(), 'src/schema.gql'),
+      installSubscriptionHandlers: true,
+    }),
+  ],
+})
+export class AppModule {}
+```
+
+## Creating a `PubSub` instance
+
+The `PubSub` class from `graphql-subscriptions` is a simple in-process event bus. Create an instance and share it across your resolver.
+
+```typescript
+import { PubSub } from 'graphql-subscriptions';
+
+const pubSub = new PubSub();
+```
+
+<Warning>
+The built-in `PubSub` is in-process only — it does not work across multiple server instances. For production deployments with horizontal scaling, replace it with a distributed implementation such as [`graphql-redis-subscriptions`](https://github.com/davidyaha/graphql-redis-subscriptions).
+</Warning>
+
+## The `@Subscription()` decorator
+
+Decorate a resolver method with `@Subscription()` and return the result of `pubSub.asyncIterableIterator(triggerName)`.
+
+```typescript recipes.resolver.ts
+import { Args, Mutation, Query, Resolver, Subscription } from '@nestjs/graphql';
+import { PubSub } from 'graphql-subscriptions';
+import { NewRecipeInput } from './dto/new-recipe.input';
+import { Recipe } from './models/recipe.model';
+import { RecipesService } from './recipes.service';
+
+const pubSub = new PubSub();
+
+@Resolver(() => Recipe)
+export class RecipesResolver {
+  constructor(private readonly recipesService: RecipesService) {}
+
+  @Query(() => [Recipe])
+  recipes(): Promise<Recipe[]> {
+    return this.recipesService.findAll();
+  }
+
+  @Mutation(() => Recipe)
+  async addRecipe(
+    @Args('input') input: NewRecipeInput,
+  ): Promise<Recipe> {
+    const recipe = await this.recipesService.create(input);
+    void pubSub.publish('recipeAdded', { recipeAdded: recipe });
+    return recipe;
+  }
+
+  @Subscription(() => Recipe)
+  recipeAdded() {
+    return pubSub.asyncIterableIterator('recipeAdded');
+  }
+}
+```
+
+The payload object passed to `pubSub.publish()` must have a key that matches the subscription method name (`recipeAdded` in this example).
+
+### Generated schema
+
+```graphql
+type Subscription {
+  recipeAdded: Recipe!
+}
+```
+
+### Subscribing from a client
+
+```graphql
+subscription {
+  recipeAdded {
+    id
+    title
+    ingredients
+  }
+}
+```
+
+## Filtering subscriptions
+
+Use the `filter` option to deliver events only to clients that meet a condition. The filter function receives the event `payload` and the subscription `variables` and must return a boolean.
+
+```typescript
+@Subscription(() => Recipe, {
+  filter: (payload, variables) =>
+    payload.recipeAdded.title.includes(variables.titleFilter),
+})
+recipeAdded(@Args('titleFilter') titleFilter: string) {
+  return pubSub.asyncIterableIterator('recipeAdded');
+}
+```
+
+The client passes `titleFilter` as a subscription variable:
+
+```graphql
+subscription OnRecipeAdded($titleFilter: String!) {
+  recipeAdded(titleFilter: $titleFilter) {
+    id
+    title
+  }
+}
+```
+
+## Transforming the payload
+
+Use the `resolve` option to transform the raw event payload before it reaches the client:
+
+```typescript
+@Subscription(() => Recipe, {
+  resolve: (payload) => payload.recipeAdded,
+})
+recipeAdded() {
+  return pubSub.asyncIterableIterator('recipeAdded');
+}
+```
+
+This is useful when the published payload wraps the entity in a named key and you want to unwrap it.
+
+## `asyncIterableIterator` usage
+
+`pubSub.asyncIterableIterator(triggerName)` returns an async iterator that yields each event published under `triggerName`. NestJS uses this iterator to stream payloads over the WebSocket connection.
+
+You can pass an array of trigger names to listen to multiple events:
+
+```typescript
+@Subscription(() => Recipe)
+recipeEvents() {
+  return pubSub.asyncIterableIterator(['recipeAdded', 'recipeUpdated']);
+}
+```
+
+## Full example
+
+<CodeGroup>
+
+```typescript recipes.resolver.ts
+import { Args, Mutation, Query, Resolver, Subscription } from '@nestjs/graphql';
+import { PubSub } from 'graphql-subscriptions';
+import { NewRecipeInput } from './dto/new-recipe.input';
+import { Recipe } from './models/recipe.model';
+import { RecipesService } from './recipes.service';
+
+const pubSub = new PubSub();
+
+@Resolver(() => Recipe)
+export class RecipesResolver {
+  constructor(private readonly recipesService: RecipesService) {}
+
+  @Query(() => [Recipe])
+  recipes(): Promise<Recipe[]> {
+    return this.recipesService.findAll();
+  }
+
+  @Mutation(() => Recipe)
+  async addRecipe(
+    @Args('input') input: NewRecipeInput,
+  ): Promise<Recipe> {
+    const recipe = await this.recipesService.create(input);
+    void pubSub.publish('recipeAdded', { recipeAdded: recipe });
+    return recipe;
+  }
+
+  @Mutation(() => Boolean)
+  async removeRecipe(@Args('id') id: string): Promise<boolean> {
+    return this.recipesService.remove(id);
+  }
+
+  @Subscription(() => Recipe)
+  recipeAdded() {
+    return pubSub.asyncIterableIterator('recipeAdded');
+  }
+
+  @Subscription(() => Recipe, {
+    filter: (payload, variables) =>
+      payload.recipeAdded.title.includes(variables.titleFilter),
+  })
+  recipeAddedFiltered(@Args('titleFilter') titleFilter: string) {
+    return pubSub.asyncIterableIterator('recipeAdded');
+  }
+}
+```
+
+```typescript app.module.ts
+import { Module } from '@nestjs/common';
+import { GraphQLModule } from '@nestjs/graphql';
+import { ApolloDriver, ApolloDriverConfig } from '@nestjs/apollo';
+import { join } from 'path';
+import { RecipesModule } from './recipes/recipes.module';
+
+@Module({
+  imports: [
+    RecipesModule,
+    GraphQLModule.forRoot<ApolloDriverConfig>({
+      driver: ApolloDriver,
+      autoSchemaFile: join(process.cwd(), 'src/schema.gql'),
+      installSubscriptionHandlers: true,
+    }),
+  ],
+})
+export class AppModule {}
+```
+
+</CodeGroup>
+
+<Columns cols={2}>
+  <Card title="Mutations" icon="pencil" href="/graphql/mutations">
+    Publish subscription events after successful mutations.
+  </Card>
+  <Card title="GraphQL overview" icon="book" href="/graphql/overview">
+    Configure GraphQLModule and choose code-first or schema-first.
+  </Card>
+</Columns>

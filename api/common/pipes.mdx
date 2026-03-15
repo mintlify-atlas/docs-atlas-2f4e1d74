@@ -1,0 +1,269 @@
+---
+title: Built-in pipes
+description: Reference for all built-in transformation and validation pipes exported from @nestjs/common.
+---
+
+All built-in pipes implement the `PipeTransform<T, R>` interface and are exported from `@nestjs/common`. Apply them at the parameter, route handler, controller, or global level.
+
+---
+
+## `ValidationPipe`
+
+Validates incoming request data against a DTO class decorated with `class-validator` decorators. Optionally transforms the plain request payload into a typed class instance using `class-transformer`.
+
+**Requires** `class-validator` and `class-transformer` packages.
+
+```typescript
+new ValidationPipe(options?: ValidationPipeOptions)
+```
+
+### Options
+
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `transform` | `boolean` | `false` | Transform the request payload into a typed DTO instance. |
+| `whitelist` | `boolean` | `false` | Strip properties not declared in the DTO class. |
+| `forbidNonWhitelisted` | `boolean` | `false` | Throw a `400 Bad Request` when non-whitelisted properties are present (requires `whitelist: true`). |
+| `disableErrorMessages` | `boolean` | `false` | Return a generic error response without detailed validation messages. |
+| `transformOptions` | `ClassTransformOptions` | — | Options passed to `class-transformer` during transformation. |
+| `errorHttpStatusCode` | `ErrorHttpStatusCode` | `400` | HTTP status code used when validation fails. |
+| `exceptionFactory` | `(errors: ValidationError[]) => any` | — | Custom factory to produce the exception thrown on validation failure. |
+| `validateCustomDecorators` | `boolean` | `false` | Validate properties decorated with custom (non-class-validator) decorators. |
+| `expectedType` | `Type<any>` | — | Override the metatype used for validation. |
+| `validatorPackage` | `ValidatorPackage` | — | Supply a custom `class-validator` package. |
+| `transformerPackage` | `TransformerPackage` | — | Supply a custom `class-transformer` package. |
+
+Additionally, all `ValidatorOptions` from `class-validator` are accepted (e.g., `skipMissingProperties`, `groups`, `stopAtFirstError`).
+
+### Usage
+
+<CodeGroup>
+
+```typescript Global
+import { NestFactory } from '@nestjs/core';
+import { ValidationPipe } from '@nestjs/common';
+
+const app = await NestFactory.create(AppModule);
+app.useGlobalPipes(
+  new ValidationPipe({
+    whitelist: true,
+    forbidNonWhitelisted: true,
+    transform: true,
+  }),
+);
+```
+
+```typescript Route handler
+import { Post, Body, UsePipes, ValidationPipe } from '@nestjs/common';
+
+@Post()
+@UsePipes(new ValidationPipe())
+create(@Body() createDto: CreateCatDto) {}
+```
+
+</CodeGroup>
+
+---
+
+## `ParseIntPipe`
+
+Transforms a string parameter to an integer. Throws a `BadRequestException` if the value is not a valid numeric string.
+
+```typescript
+new ParseIntPipe(options?: ParseIntPipeOptions)
+```
+
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `errorHttpStatusCode` | `ErrorHttpStatusCode` | `400` | Status code on failure. |
+| `exceptionFactory` | `(error: string) => any` | — | Custom exception factory. |
+| `optional` | `boolean` | `false` | Return `undefined`/`null` unchanged instead of throwing. |
+
+```typescript
+@Get(':id')
+findOne(@Param('id', ParseIntPipe) id: number) {}
+```
+
+---
+
+## `ParseBoolPipe`
+
+Transforms `'true'`/`'false'` strings (or actual booleans) to a `boolean`. Throws `BadRequestException` for any other value.
+
+```typescript
+new ParseBoolPipe(options?: ParseBoolPipeOptions)
+```
+
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `errorHttpStatusCode` | `ErrorHttpStatusCode` | `400` | Status code on failure. |
+| `exceptionFactory` | `(error: string) => any` | — | Custom exception factory. |
+| `optional` | `boolean` | `false` | Return `undefined`/`null` unchanged instead of throwing. |
+
+```typescript
+@Get()
+findAll(@Query('active', ParseBoolPipe) active: boolean) {}
+```
+
+---
+
+## `ParseFloatPipe`
+
+Transforms a string to a floating-point number. Throws `BadRequestException` if the value is not parsable.
+
+```typescript
+new ParseFloatPipe(options?: ParseFloatPipeOptions)
+```
+
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `errorHttpStatusCode` | `ErrorHttpStatusCode` | `400` | Status code on failure. |
+| `exceptionFactory` | `(error: string) => any` | — | Custom exception factory. |
+| `optional` | `boolean` | `false` | Return `undefined`/`null` unchanged. |
+
+---
+
+## `ParseArrayPipe`
+
+Parses a comma-separated string or a JSON array into a JavaScript array. Optionally validates each item using `class-validator`.
+
+```typescript
+new ParseArrayPipe(options?: ParseArrayOptions)
+```
+
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `items` | `Type<unknown>` | — | Type to convert each array item into. |
+| `separator` | `string` | `','` | Delimiter used to split a string into array items. |
+| `optional` | `boolean` | `false` | Return `undefined`/`null` unchanged. |
+| `exceptionFactory` | `(error: any) => any` | — | Custom exception factory. |
+| `errorHttpStatusCode` | `ErrorHttpStatusCode` | `400` | Status code on failure. |
+
+Also accepts all `ValidationPipeOptions` fields (excluding `transform`, `validateCustomDecorators`, and `exceptionFactory`).
+
+```typescript
+@Get()
+findAll(@Query('ids', new ParseArrayPipe({ items: Number })) ids: number[]) {}
+// ?ids=1,2,3 => [1, 2, 3]
+```
+
+---
+
+## `ParseEnumPipe`
+
+Validates that a value belongs to a TypeScript enum. Throws `BadRequestException` if it does not.
+
+```typescript
+new ParseEnumPipe(enumType: T, options?: ParseEnumPipeOptions)
+```
+
+<ParamField path="enumType" type="T" required>
+  The TypeScript enum object to validate against. Required.
+</ParamField>
+
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `optional` | `boolean` | `false` | Return `undefined`/`null` unchanged. |
+| `errorHttpStatusCode` | `ErrorHttpStatusCode` | `400` | Status code on failure. |
+| `exceptionFactory` | `(error: string) => any` | — | Custom exception factory. |
+
+```typescript
+enum Direction { Up = 'UP', Down = 'DOWN' }
+
+@Get(':direction')
+move(@Param('direction', new ParseEnumPipe(Direction)) dir: Direction) {}
+```
+
+---
+
+## `ParseUUIDPipe`
+
+Validates that a string is a valid UUID. Supports UUID versions 3, 4, 5, and 7. When no version is specified, any valid UUID format is accepted.
+
+```typescript
+new ParseUUIDPipe(options?: ParseUUIDPipeOptions)
+```
+
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `version` | `'3' \| '4' \| '5' \| '7'` | any | Restrict to a specific UUID version. |
+| `errorHttpStatusCode` | `ErrorHttpStatusCode` | `400` | Status code on failure. |
+| `exceptionFactory` | `(errors: string) => any` | — | Custom exception factory. |
+| `optional` | `boolean` | `false` | Return `undefined`/`null` unchanged. |
+
+```typescript
+@Get(':id')
+findOne(@Param('id', new ParseUUIDPipe({ version: '4' })) id: string) {}
+```
+
+---
+
+## `ParseFilePipe`
+
+Validates uploaded files against one or more file validators (e.g., `MaxFileSizeValidator`, `FileTypeValidator`). Exported from `@nestjs/common`.
+
+```typescript
+new ParseFilePipe(options?: ParseFileOptions)
+```
+
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `validators` | `FileValidator[]` | — | Array of file validator instances to run against the uploaded file. |
+| `errorHttpStatusCode` | `ErrorHttpStatusCode` | `400` | Status code when validation fails. |
+| `exceptionFactory` | `(error: string) => any` | — | Custom exception factory. |
+| `fileIsRequired` | `boolean` | `true` | When `false`, `undefined` is allowed (file not required). |
+
+```typescript
+import { ParseFilePipe, MaxFileSizeValidator, FileTypeValidator } from '@nestjs/common';
+
+@Post('upload')
+uploadFile(
+  @UploadedFile(
+    new ParseFilePipe({
+      validators: [
+        new MaxFileSizeValidator({ maxSize: 1000 }),
+        new FileTypeValidator({ fileType: 'image/jpeg' }),
+      ],
+    }),
+  )
+  file: Express.Multer.File,
+) {}
+```
+
+---
+
+## `DefaultValuePipe`
+
+Returns a default value when the incoming value is `null` or `undefined`.
+
+```typescript
+new DefaultValuePipe<T, R>(defaultValue: R)
+```
+
+<ParamField path="defaultValue" type="R" required>
+  The value to return when the input is `null`, `undefined`, or `NaN` (for numbers).
+</ParamField>
+
+```typescript
+@Get()
+findAll(
+  @Query('page', new DefaultValuePipe(1), ParseIntPipe) page: number,
+  @Query('limit', new DefaultValuePipe(10), ParseIntPipe) limit: number,
+) {}
+```
+
+---
+
+## `ParseDatePipe`
+
+Parses a string into a JavaScript `Date` object.
+
+```typescript
+new ParseDatePipe(options?: ParseDatePipeOptions)
+```
+
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `errorHttpStatusCode` | `ErrorHttpStatusCode` | `400` | Status code on failure. |
+| `exceptionFactory` | `(error: string) => any` | — | Custom exception factory. |
+| `optional` | `boolean` | `false` | Return `undefined`/`null` unchanged. |

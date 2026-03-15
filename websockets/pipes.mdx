@@ -1,0 +1,229 @@
+---
+title: 'Pipes'
+description: 'Validate and transform WebSocket message payloads using NestJS pipes inside gateway handlers.'
+keywords: ['websockets', 'pipes', 'validation', 'transform', 'ValidationPipe', 'nest']
+---
+
+Pipes work in WebSocket gateways the same way they work in HTTP controllers. You can apply them at the parameter, method, gateway, or global scope. NestJS resolves them before the handler executes, and they receive the value bound to the decorated parameter.
+
+<Note>
+All built-in pipes (`ValidationPipe`, `ParseIntPipe`, `ParseUUIDPipe`, etc.) are available in WebSocket handlers without any additional setup.
+</Note>
+
+## Applying a pipe to a parameter
+
+Pass one or more pipes directly to `@MessageBody()` as arguments. The pipe receives the incoming payload and must return a transformed value or throw a `WsException`.
+
+```typescript
+import {
+  MessageBody,
+  SubscribeMessage,
+  WebSocketGateway,
+} from '@nestjs/websockets';
+import { ParseIntPipe, ValidationPipe } from '@nestjs/common';
+
+@WebSocketGateway()
+export class EventsGateway {
+  @SubscribeMessage('increment')
+  handleIncrement(@MessageBody(ParseIntPipe) value: number): number {
+    return value + 1;
+  }
+}
+```
+
+You can chain multiple pipes:
+
+```typescript
+@SubscribeMessage('create')
+handleCreate(
+  @MessageBody(new ValidationPipe(), new TrimPipe()) dto: CreateCatDto,
+): CreateCatDto {
+  return dto;
+}
+```
+
+Pipes run left-to-right. Each pipe receives the output of the previous one.
+
+## Validating with `ValidationPipe`
+
+The most common use case is validating a DTO with `class-validator` and `class-transformer`.
+
+<Steps>
+  <Step title="Install the required packages">
+    ```bash
+    npm install class-validator class-transformer
+    ```
+  </Step>
+  <Step title="Define a DTO with validation decorators">
+    ```typescript create-message.dto.ts
+    import { IsString, MaxLength, MinLength } from 'class-validator';
+
+    export class CreateMessageDto {
+      @IsString()
+      @MinLength(1)
+      @MaxLength(255)
+      content: string;
+
+      @IsString()
+      room: string;
+    }
+    ```
+  </Step>
+  <Step title="Apply ValidationPipe to the handler parameter">
+    ```typescript events.gateway.ts
+    import {
+      MessageBody,
+      SubscribeMessage,
+      WebSocketGateway,
+    } from '@nestjs/websockets';
+    import { UsePipes, ValidationPipe } from '@nestjs/common';
+    import { CreateMessageDto } from './create-message.dto';
+
+    @WebSocketGateway()
+    export class EventsGateway {
+      @SubscribeMessage('message')
+      @UsePipes(new ValidationPipe())
+      handleMessage(@MessageBody() dto: CreateMessageDto) {
+        // dto is validated and typed
+        return { received: dto.content };
+      }
+    }
+    ```
+  </Step>
+</Steps>
+
+## Applying a pipe with `@UsePipes()`
+
+`@UsePipes()` binds a pipe to every parameter of the decorated method.
+
+### Method-scoped
+
+```typescript
+import { SubscribeMessage, WebSocketGateway } from '@nestjs/websockets';
+import { UsePipes, ValidationPipe } from '@nestjs/common';
+import { CreateCatDto } from './create-cat.dto';
+
+@WebSocketGateway()
+export class EventsGateway {
+  @UsePipes(new ValidationPipe())
+  @SubscribeMessage('create')
+  handleCreate(@MessageBody() dto: CreateCatDto) {
+    return dto;
+  }
+}
+```
+
+### Gateway-scoped
+
+Applying `@UsePipes()` at the class level causes the pipe to run on every handler in the gateway.
+
+```typescript
+import { UsePipes, ValidationPipe } from '@nestjs/common';
+import { WebSocketGateway, SubscribeMessage, MessageBody } from '@nestjs/websockets';
+
+@UsePipes(new ValidationPipe())
+@WebSocketGateway()
+export class EventsGateway {
+  @SubscribeMessage('create')
+  handleCreate(@MessageBody() dto: CreateCatDto) {
+    return dto;
+  }
+
+  @SubscribeMessage('update')
+  handleUpdate(@MessageBody() dto: UpdateCatDto) {
+    return dto;
+  }
+}
+```
+
+### Global-scoped
+
+```typescript main.ts
+import { NestFactory } from '@nestjs/core';
+import { ValidationPipe } from '@nestjs/common';
+import { AppModule } from './app.module';
+
+async function bootstrap() {
+  const app = await NestFactory.create(AppModule);
+  app.useGlobalPipes(new ValidationPipe());
+  await app.listen(3000);
+}
+bootstrap();
+```
+
+<Tip>
+Use the `APP_PIPE` token to register a global pipe with dependency injection support:
+
+```typescript
+import { APP_PIPE } from '@nestjs/core';
+
+@Module({
+  providers: [
+    {
+      provide: APP_PIPE,
+      useValue: new ValidationPipe(),
+    },
+  ],
+})
+export class AppModule {}
+```
+</Tip>
+
+## Writing a custom pipe for WebSocket handlers
+
+Custom pipes work identically to HTTP pipes — implement `PipeTransform<T, R>` and throw a `WsException` (instead of an `HttpException`) when validation fails so that the error is handled correctly by the WebSocket exception filter.
+
+```typescript parse-message.pipe.ts
+import { Injectable, PipeTransform } from '@nestjs/common';
+import { WsException } from '@nestjs/websockets';
+
+@Injectable()
+export class ParseMessagePipe implements PipeTransform<string, { text: string }> {
+  transform(value: string) {
+    if (typeof value !== 'string') {
+      throw new WsException('Message must be a string');
+    }
+    return { text: value.trim() };
+  }
+}
+```
+
+Then use it like any other pipe:
+
+```typescript
+@SubscribeMessage('chat')
+handleChat(
+  @MessageBody(ParseMessagePipe) message: { text: string },
+) {
+  return message;
+}
+```
+
+## ValidationPipe options relevant to WebSockets
+
+| Option | Type | Description |
+|---|---|---|
+| `whitelist` | `boolean` | Strip properties not present in the DTO. |
+| `forbidNonWhitelisted` | `boolean` | Throw if extra properties are present. |
+| `transform` | `boolean` | Automatically transform plain payloads into DTO instances. |
+| `exceptionFactory` | `(errors) => any` | Override the exception thrown on validation failure. |
+
+<Warning>
+By default, `ValidationPipe` throws an `HttpException`. To integrate cleanly with the WebSocket error flow, provide a custom `exceptionFactory` that throws a `WsException` instead:
+
+```typescript
+new ValidationPipe({
+  exceptionFactory: errors =>
+    new WsException(errors.map(e => Object.values(e.constraints ?? {})).flat()),
+})
+```
+</Warning>
+
+<Columns cols={2}>
+  <Card title="Guards" icon="shield" href="/websockets/guards">
+    Protect gateway handlers with authentication guards.
+  </Card>
+  <Card title="Exception filters" icon="triangle-alert" href="/websockets/exception-filters">
+    Handle validation errors with WebSocket exception filters.
+  </Card>
+</Columns>

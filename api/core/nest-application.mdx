@@ -1,0 +1,386 @@
+---
+title: NestApplication
+description: Public methods available on INestApplication — the core application object returned by NestFactory.create().
+---
+
+`INestApplication` is the interface implemented by the object returned from `NestFactory.create()`. It extends `INestApplicationContext` and adds HTTP-specific lifecycle and configuration methods.
+
+---
+
+## Lifecycle
+
+### `init()`
+
+Initializes the application. Registers middleware, resolves routes, and calls lifecycle hooks. Called automatically by `listen()` if not called manually.
+
+```typescript
+async init(): Promise<this>
+```
+
+**Returns** `Promise<this>`
+
+---
+
+### `listen()`
+
+Starts the HTTP server and begins accepting connections. Calls `init()` internally if the application has not been initialized.
+
+```typescript
+listen(port: number | string, callback?: () => void): Promise<any>
+listen(port: number | string, hostname: string, callback?: () => void): Promise<any>
+```
+
+<ParamField path="port" type="number | string" required>
+  The port number or named pipe on which to listen.
+</ParamField>
+
+<ParamField path="hostname" type="string">
+  The hostname to bind to. Defaults to the platform's default (typically `0.0.0.0`).
+</ParamField>
+
+<ParamField path="callback" type="() => void">
+  Optional callback invoked once the server is ready.
+</ParamField>
+
+**Returns** `Promise<any>` — resolves with the underlying native HTTP server.
+
+```typescript
+await app.listen(3000);
+await app.listen(3000, '127.0.0.1');
+```
+
+---
+
+### `getUrl()`
+
+Returns the URL the server is listening on, derived from the OS address and IP version. Rejects if called before `listen()`.
+
+```typescript
+getUrl(): Promise<string>
+```
+
+**Returns** `Promise<string>` — e.g. `http://127.0.0.1:3000`
+
+```typescript
+await app.listen(3000);
+const url = await app.getUrl();
+console.log(`Application is running on: ${url}`);
+```
+
+---
+
+### `close()`
+
+Terminates the application, including the HTTP server, WebSocket gateways, and all connected microservices. Triggers the `OnModuleDestroy` and `BeforeApplicationShutdown` lifecycle hooks.
+
+```typescript
+close(): Promise<void>
+```
+
+**Returns** `Promise<void>`
+
+---
+
+## Global configuration
+
+### `setGlobalPrefix()`
+
+Registers a path prefix that is prepended to every HTTP route in the application.
+
+```typescript
+setGlobalPrefix(prefix: string, options?: GlobalPrefixOptions): this
+```
+
+<ParamField path="prefix" type="string" required>
+  The prefix string, e.g. `'api'` or `'v1/api'`.
+</ParamField>
+
+<ParamField path="options" type="GlobalPrefixOptions">
+  <Expandable title="GlobalPrefixOptions fields">
+    <ResponseField name="exclude" type="string[] | RouteInfo[]">
+      Routes to exclude from the global prefix. Accepts path strings or `RouteInfo` objects with `path` and `method`.
+    </ResponseField>
+  </Expandable>
+</ParamField>
+
+**Returns** `this`
+
+```typescript
+app.setGlobalPrefix('api', {
+  exclude: [{ path: 'health', method: RequestMethod.GET }],
+});
+```
+
+---
+
+### `enableCors()`
+
+Enables CORS (Cross-Origin Resource Sharing). Delegates to the underlying HTTP adapter.
+
+```typescript
+enableCors(options?: CorsOptions | CorsOptionsDelegate): void
+```
+
+<ParamField path="options" type="CorsOptions | CorsOptionsDelegate">
+  CORS options from the [cors](https://github.com/expressjs/cors#configuration-options) package, or a delegate function that returns options per-request.
+</ParamField>
+
+```typescript
+app.enableCors({ origin: 'https://example.com', credentials: true });
+```
+
+---
+
+### `enableVersioning()`
+
+Enables API versioning. Defaults to URI-based versioning.
+
+```typescript
+enableVersioning(options?: VersioningOptions): this
+```
+
+<ParamField path="options" type="VersioningOptions" default="{ type: VersioningType.URI }">
+  Versioning strategy configuration. The `type` field accepts `VersioningType.URI`, `VersioningType.HEADER`, `VersioningType.MEDIA_TYPE`, or `VersioningType.CUSTOM`.
+</ParamField>
+
+**Returns** `this`
+
+```typescript
+import { VersioningType } from '@nestjs/common';
+
+app.enableVersioning({ type: VersioningType.URI });
+// Routes become /v1/cats, /v2/cats, etc.
+```
+
+---
+
+## Middleware
+
+### `use()`
+
+Registers middleware on the underlying HTTP adapter. Equivalent to calling `adapter.use(...)`.
+
+```typescript
+use(...args: [any, any?]): this
+```
+
+**Returns** `this`
+
+```typescript
+import * as helmet from 'helmet';
+app.use(helmet());
+```
+
+---
+
+### `useBodyParser()`
+
+Registers a body parser middleware on the HTTP adapter. The adapter must support this method.
+
+```typescript
+useBodyParser(...args: [any, any?]): this
+```
+
+<ParamField path="args" type="[parserType, ...options]" required>
+  The first argument is the parser type (e.g., `'json'`, `'urlencoded'`). Additional arguments are passed directly to the adapter.
+</ParamField>
+
+**Returns** `this`
+
+<Note>
+  Not all adapters support `useBodyParser()`. A warning is logged if the adapter does not implement this method.
+</Note>
+
+---
+
+## Global enhancers
+
+### `useGlobalPipes()`
+
+Registers one or more pipes that apply to every route handler in the application.
+
+```typescript
+useGlobalPipes(...pipes: PipeTransform<any>[]): this
+```
+
+<ParamField path="pipes" type="PipeTransform[]" required>
+  Pipe instances to apply globally.
+</ParamField>
+
+**Returns** `this`
+
+```typescript
+app.useGlobalPipes(new ValidationPipe({ whitelist: true }));
+```
+
+---
+
+### `useGlobalFilters()`
+
+Registers one or more exception filters that apply globally.
+
+```typescript
+useGlobalFilters(...filters: ExceptionFilter[]): this
+```
+
+**Returns** `this`
+
+```typescript
+app.useGlobalFilters(new HttpExceptionFilter());
+```
+
+---
+
+### `useGlobalInterceptors()`
+
+Registers one or more interceptors that apply globally.
+
+```typescript
+useGlobalInterceptors(...interceptors: NestInterceptor[]): this
+```
+
+**Returns** `this`
+
+---
+
+### `useGlobalGuards()`
+
+Registers one or more guards that apply globally.
+
+```typescript
+useGlobalGuards(...guards: CanActivate[]): this
+```
+
+**Returns** `this`
+
+---
+
+## Adapters and servers
+
+### `useWebSocketAdapter()`
+
+Replaces the default Socket.IO WebSocket adapter with a custom one.
+
+```typescript
+useWebSocketAdapter(adapter: WebSocketAdapter): this
+```
+
+<ParamField path="adapter" type="WebSocketAdapter" required>
+  A custom WebSocket adapter that implements `WebSocketAdapter`.
+</ParamField>
+
+**Returns** `this`
+
+```typescript
+import { WsAdapter } from '@nestjs/platform-ws';
+app.useWebSocketAdapter(new WsAdapter(app));
+```
+
+---
+
+### `getHttpServer()`
+
+Returns the underlying native HTTP server (e.g., `http.Server` for Express).
+
+```typescript
+getHttpServer(): any
+```
+
+---
+
+### `getHttpAdapter()`
+
+Returns the HTTP adapter instance (`AbstractHttpAdapter`).
+
+```typescript
+getHttpAdapter(): HttpServer
+```
+
+---
+
+## Dependency injection
+
+### `get<T>()`
+
+Retrieves a provider, controller, or any injectable registered in the application's DI container. Inherited from `INestApplicationContext`.
+
+```typescript
+get<T>(typeOrToken: Type<T> | InjectionToken, options?: { strict?: boolean }): T
+```
+
+<ParamField path="typeOrToken" type="Type<T> | InjectionToken" required>
+  The class type or injection token for the provider to retrieve.
+</ParamField>
+
+<ParamField path="options.strict" type="boolean" default="false">
+  When `true`, restricts the lookup to the current module context rather than searching the entire application.
+</ParamField>
+
+**Returns** `T`
+
+```typescript
+const appService = app.get(AppService);
+```
+
+---
+
+### `select()`
+
+Navigates to a specific module within the application context to restrict DI lookups. Inherited from `INestApplicationContext`.
+
+```typescript
+select<T>(module: Type<T>): INestApplicationContext
+```
+
+**Returns** `INestApplicationContext` scoped to the selected module.
+
+---
+
+## Microservices
+
+### `connectMicroservice()`
+
+Attaches a microservice to the HTTP application, turning it into a hybrid application.
+
+```typescript
+connectMicroservice<T extends object>(
+  options: T,
+  hybridOptions?: NestHybridApplicationOptions,
+): INestMicroservice
+```
+
+<ParamField path="options" type="T" required>
+  Microservice transport options (same shape as `NestFactory.createMicroservice` options).
+</ParamField>
+
+<ParamField path="hybridOptions" type="NestHybridApplicationOptions">
+  <Expandable title="NestHybridApplicationOptions fields">
+    <ResponseField name="inheritAppConfig" type="boolean">
+      When `true`, the microservice instance inherits global pipes, filters, interceptors, and guards from the HTTP application.
+    </ResponseField>
+    <ResponseField name="deferInitialization" type="boolean">
+      When `true`, the microservice listeners are not registered immediately. You must call `startAllMicroservices()` to start them.
+    </ResponseField>
+  </Expandable>
+</ParamField>
+
+**Returns** `INestMicroservice`
+
+---
+
+### `startAllMicroservices()`
+
+Starts all microservices connected via `connectMicroservice()`.
+
+```typescript
+startAllMicroservices(): Promise<this>
+```
+
+**Returns** `Promise<this>`
+
+```typescript
+const app = await NestFactory.create(AppModule);
+app.connectMicroservice({ transport: Transport.TCP });
+await app.startAllMicroservices();
+await app.listen(3000);
+```

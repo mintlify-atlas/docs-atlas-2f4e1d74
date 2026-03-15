@@ -1,0 +1,259 @@
+---
+title: Client
+description: ClientProxy, ClientProxyFactory, and ClientsModule for sending messages and emitting events from NestJS microservice clients.
+---
+
+## `ClientProxy`
+
+Abstract base class for all microservice client implementations. Provides `send()` and `emit()` for interacting with a remote microservice. You obtain a concrete instance from `ClientProxyFactory.create()`, `ClientsModule.register()`, or the `@Client()` decorator.
+
+```typescript
+abstract class ClientProxy<
+  EventsMap extends Record<never, Function> = Record<never, Function>,
+  Status extends string = string,
+>
+```
+
+---
+
+### `send()`
+
+Sends a message to the remote microservice and returns an `Observable` that emits the response. This is the **request-response** pattern — use it when you need a reply.
+
+```typescript
+send<TResult = any, TInput = any>(
+  pattern: any,
+  data: TInput,
+): Observable<TResult>
+```
+
+<ParamField path="pattern" type="any" required>
+  The message pattern to route the request to. Must match a `@MessagePattern()` handler on the receiving service. Can be a string, object, or any serializable value.
+</ParamField>
+
+<ParamField path="data" type="TInput" required>
+  The payload to send along with the message.
+</ParamField>
+
+**Returns** `Observable<TResult>` — subscribing to this observable triggers the request. The observable emits the response and then completes.
+
+```typescript
+import { Injectable } from '@nestjs/common';
+import { ClientProxy } from '@nestjs/microservices';
+import { Observable } from 'rxjs';
+
+@Injectable()
+export class AppService {
+  constructor(private readonly client: ClientProxy) {}
+
+  getData(): Observable<number[]> {
+    return this.client.send<number[]>({ cmd: 'get_data' }, {});
+  }
+}
+```
+
+<Note>
+  You must subscribe to the `Observable` returned by `send()` for the message to be sent. Returning it from a controller route handler is enough — Nest subscribes automatically.
+</Note>
+
+---
+
+### `emit()`
+
+Emits an event to the microservice. This is the **event-driven** (fire-and-forget) pattern — no response is expected.
+
+```typescript
+emit<TResult = any, TInput = any>(
+  pattern: any,
+  data: TInput,
+): Observable<TResult>
+```
+
+<ParamField path="pattern" type="any" required>
+  The event pattern. Must match a `@EventPattern()` handler on the receiving service.
+</ParamField>
+
+<ParamField path="data" type="TInput" required>
+  The event payload.
+</ParamField>
+
+**Returns** `Observable<TResult>` — automatically connects and completes once the event is dispatched.
+
+```typescript
+this.client.emit('user_created', { id: 1, name: 'Alice' });
+```
+
+---
+
+### `connect()`
+
+Establishes a connection to the underlying server or broker. Called automatically by `send()` and `emit()`, but you can call it eagerly during application startup.
+
+```typescript
+abstract connect(): Promise<any>
+```
+
+---
+
+### `close()`
+
+Closes the underlying connection.
+
+```typescript
+abstract close(): any
+```
+
+---
+
+### `status`
+
+An `Observable<Status>` that emits the current connection status whenever it changes.
+
+```typescript
+get status(): Observable<Status>
+```
+
+---
+
+### `on()`
+
+Registers an event listener on the underlying transport client.
+
+```typescript
+on<EventKey extends keyof EventsMap>(
+  event: EventKey,
+  callback: EventsMap[EventKey],
+): void
+```
+
+---
+
+### `unwrap()`
+
+Returns the underlying native transport client instance.
+
+```typescript
+abstract unwrap<T>(): T
+```
+
+---
+
+## `ClientProxyFactory`
+
+A static factory for creating `ClientProxy` instances programmatically.
+
+```typescript
+class ClientProxyFactory {
+  static create(clientOptions: ClientOptions): ClientProxy;
+  static create(clientOptions: CustomClientOptions): ClientProxy;
+}
+```
+
+<ParamField path="clientOptions" type="ClientOptions | CustomClientOptions" required>
+  Transport options. For standard transports, provide `{ transport: Transport.TCP, options: { ... } }`. For custom transports, provide `{ customClass: MyTransport, options: {...} }`.
+</ParamField>
+
+```typescript
+import { ClientProxyFactory, Transport } from '@nestjs/microservices';
+
+const client = ClientProxyFactory.create({
+  transport: Transport.TCP,
+  options: { host: 'localhost', port: 3001 },
+});
+```
+
+The `Transport` enum values are: `TCP`, `REDIS`, `NATS`, `MQTT`, `GRPC`, `RMQ`, `KAFKA`.
+
+---
+
+## `ClientsModule`
+
+`ClientsModule` registers one or more `ClientProxy` instances as injectable providers, identified by name tokens.
+
+### `ClientsModule.register()`
+
+Synchronously registers clients.
+
+```typescript
+ClientsModule.register(options: ClientsModuleOptions): DynamicModule
+```
+
+<ParamField path="options" type="ClientsModuleOptions" required>
+  An array of client option objects. Each entry must include a `name` property (the injection token) and transport configuration.
+</ParamField>
+
+```typescript
+import { Module } from '@nestjs/common';
+import { ClientsModule, Transport } from '@nestjs/microservices';
+
+@Module({
+  imports: [
+    ClientsModule.register([
+      {
+        name: 'MATH_SERVICE',
+        transport: Transport.TCP,
+        options: { host: 'localhost', port: 3001 },
+      },
+    ]),
+  ],
+})
+export class AppModule {}
+```
+
+Inject using the `name` token:
+
+```typescript
+constructor(
+  @Inject('MATH_SERVICE') private readonly mathClient: ClientProxy,
+) {}
+```
+
+---
+
+### `ClientsModule.registerAsync()`
+
+Asynchronously registers clients, allowing you to inject configuration values.
+
+```typescript
+ClientsModule.registerAsync(options: ClientsModuleAsyncOptions): DynamicModule
+```
+
+```typescript
+ClientsModule.registerAsync([
+  {
+    name: 'MATH_SERVICE',
+    useFactory: (config: ConfigService) => ({
+      transport: Transport.TCP,
+      options: { host: config.get('MATH_HOST'), port: 3001 },
+    }),
+    inject: [ConfigService],
+  },
+]),
+```
+
+---
+
+## `@Client()` decorator
+
+A property decorator that attaches a `ClientProxy` instance to a class property. Primarily useful in non-DI contexts.
+
+```typescript
+function Client(metadata?: ClientOptions): PropertyDecorator
+```
+
+<ParamField path="metadata" type="ClientOptions">
+  Transport configuration for the client.
+</ParamField>
+
+```typescript
+import { Client, ClientProxy, Transport } from '@nestjs/microservices';
+
+export class AppController {
+  @Client({ transport: Transport.TCP, options: { port: 3001 } })
+  private readonly client: ClientProxy;
+}
+```
+
+<Note>
+  For most use cases, prefer `ClientsModule.register()` over `@Client()` so the client participates in the DI lifecycle and is properly connected and closed.
+</Note>
